@@ -210,14 +210,19 @@ def train_adjoint_model(
                 yb = yb.to(device)  # shape: (B, C_out, H, W)
                 labelb = labelb.to(device)  # shape: (B, C_in)
 
+                # Scaling
+                alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
+                xb_scaled = xb * alpha
+                yb_scaled = yb * alpha
+
                 # Get one-hot encoding of labels
                 onehot = labelb.float()  #torch.nn.functional.one_hot(labelb, num_classes=label_embedder.enc_dim).float()  # (B, C_in)
                 embed = label_embedder(onehot, batch_size=xb.shape[0])  # (B, embed_dim, H, W)
-                xb = torch.cat([xb, embed], dim=1)  # (B, C_in+embed_dim, H, W)
+                xb_scaled = torch.cat([xb_scaled, embed], dim=1)  # (B, C_in+embed_dim, H, W)
 
                 optimizer.zero_grad()
-                pred = model(xb)
-                loss = torch.nn.functional.mse_loss(pred, yb)
+                pred = model(xb_scaled)
+                loss = torch.nn.functional.mse_loss(pred, yb_scaled)
                 loss.backward()
                 optimizer.step()
 
@@ -277,9 +282,14 @@ def train_adjoint_model(
                 xb = xb.to(device)  # shape: (B, C_in, H, W)
                 yb = yb.to(device)  # shape: (B, C_out, H, W)
 
+                # Scaling
+                alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
+                xb_scaled = xb * alpha
+                yb_scaled = yb * alpha
+
                 optimizer.zero_grad()
-                pred = model(xb)
-                loss = torch.nn.functional.mse_loss(pred, yb)
+                pred = model(xb_scaled)
+                loss = torch.nn.functional.mse_loss(pred, yb_scaled)
                 loss.backward()
                 optimizer.step()
 
