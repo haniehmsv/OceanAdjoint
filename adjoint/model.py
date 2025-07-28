@@ -409,7 +409,7 @@ class AdjointModel(torch.nn.Module):
     def forward(self, x_true):
         """
         Inputs:
-            x_true:       [B, C_in+embed_dim, H, W]
+            x_true:       [B, C_in, H, W]
         Returns:
             preds:       [B, C_out, H, W]
         """

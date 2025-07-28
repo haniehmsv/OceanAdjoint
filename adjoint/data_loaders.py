@@ -125,3 +125,22 @@ class AdjointDatasetFromNetCDF:
     
     def get_norms(self):
         return self.x_train_norms, self.x_test_norms
+    
+
+class WetMaskFromNetCDF:
+    def __init__(self, 
+                 wet_path,                  # Path to NetCDF file
+                 var_name,                   # Variable name in the file for data
+                 device="cpu",               # Optional torch device
+                 engine="netcdf4"            # Engine to use for reading NetCDF
+                ):
+        self.device = device
+
+        ds = xr.open_dataset(wet_path, engine=engine)
+        data = ds[var_name].values            # Shape: (H, W)
+        self.wet_mask = torch.tensor(data, dtype=torch.float32).to(device)
+        ds.close()
+
+    def get_wet_mask(self):
+        return self.wet_mask
+        
