@@ -55,31 +55,27 @@ class AdjointDatasetFromNetCDF:
                  data_path,                  # Path to NetCDF file
                  var_name,                   # Variable name in the file for data
                  C_in,                       # Number of input channels
-                 label_name=None,            # Optional variable name for labels
-                 test_frac=0.2,              # Fraction of time steps for testing
-                 device="cpu"                # Optional torch device
+                 idx_in_train,               # Temporal index of input variable in training set
+                 idx_out_train,              # Temporal index of output variable in training set
+                 idx_in_test,                # Temporal index of input variable in test set
+                 idx_out_test,               # Temporal index of output variable in test set
+                 label=None,                 # Optional variable name for labels
+                 device="cpu",               # Optional torch device
+                 engine="netcdf4"            # Engine to use for reading NetCDF
                 ):
         self.device = device
 
         # Load the NetCDF file
-        ds = xr.open_dataset(data_path)
+        ds = xr.open_dataset(data_path, engine=engine)
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
         data = torch.tensor(data, dtype=torch.float32).to(device)
 
         N, T, C_out, H, W = data.shape
-        x = data[:, :-1, :C_in]                      # (N, T-1, C_in, H, W)
-        y = data[:, 1:]                       # (N, T-1, C_out, H, W)
+        x_train = data[:, idx_in_train, :C_in]                      # (N, T_train, C_in, H, W)
+        y_train = data[:, idx_out_train]                            # (N, T_train, C_out, H, W)
+        x_test  = data[:, idx_in_test, :C_in]                       # (N, T_test, C_in, H, W)
+        y_test  = data[:, idx_out_test]                             # (N, T_test, C_out, H, W)
 
-        # Determine number of test steps
-        T_new = T - 1
-        n_test = max(1, int(test_frac * T_new))
-        n_train = T_new - n_test
-
-        # Split along time axis
-        x_train = x[:, :n_train]              # (N, T_train, ...)
-        y_train = y[:, :n_train]
-        x_test  = x[:, n_train:]              # (N, T_test, ...)
-        y_test  = y[:, n_train:]
 
         # Flatten spatial targets and time: (N*T, C, H, W)
         self.x_train = x_train.reshape(-1, C_in, H, W)
@@ -88,8 +84,12 @@ class AdjointDatasetFromNetCDF:
         self.y_test  = y_test.reshape(-1, C_out, H, W)
 
         # Compute L2 norms over channel, height, width: shape → (N*T,)
-        self.x_train_norms = torch.norm(self.x_train.view(self.x_train.shape[0], -1), dim=1)
-        self.x_test_norms = torch.norm(self.x_test.view(self.x_test.shape[0], -1), dim=1)
+        # self.x_train_norms = torch.norm(self.x_train.view(self.x_train.shape[0], -1), dim=1)
+        # self.x_test_norms = torch.norm(self.x_test.view(self.x_test.shape[0], -1), dim=1)
+
+        # Compute maximum of the absolute value over channel, height, width: shape → (N*T,)
+        self.x_train_norms = self.x_train.abs().amax(dim=(1,2,3))
+        self.x_test_norms = self.x_test.abs().amax(dim=(1,2,3))
 
         # Normalize input and output by input norm
         self.x_train = self.x_train / self.x_train_norms.view(-1, 1, 1, 1)
@@ -97,21 +97,17 @@ class AdjointDatasetFromNetCDF:
         self.x_test = self.x_test / self.x_test_norms.view(-1, 1, 1, 1)
         self.y_test = self.y_test / self.x_test_norms.view(-1, 1, 1, 1)
 
-        self.x_train_norms  # shape: (N*T_train,)
-        self.x_test_norms   # shape: (N*T_test,)
-
         self.train_labels = None
         self.test_labels = None
 
-        if label_name is not None:
-            labels = ds[label_name].values   # Shape: (N, C_in)
-            labels = torch.tensor(labels, dtype=torch.float32).to(device)  # (N, C_in)
+        if label is not None:
+            labels = torch.tensor(label, dtype=torch.float32).to(device)  # (N, C_in)
 
             # Expand to (N, T, C_in) → then flatten to (N*T, C_in)
-            labels = labels[:, None, :].expand(-1, T, -1)                   # (N, T, C_in)
-            labels = labels[:, :T_new]                                      # Match (T-1)
-            train_labels = labels[:, :n_train]                   # (N, T_train, C_in)
-            test_labels  = labels[:, n_train:]                    # (N, T_test, C_in)
+            n_train  = len(idx_in_train)
+            n_test = len(idx_in_test)
+            train_labels = labels[:, None, :].expand(-1, n_train, -1)                   # (N, T_train, C_in)
+            test_labels = labels[:, None, :].expand(-1, n_test, -1)                   # (N, T_test, C_in)
             self.train_labels = train_labels.reshape(-1, train_labels.shape[-1])                   # (N*T_train, C_in)
             self.test_labels = test_labels.reshape(-1, test_labels.shape[-1])                   # (N*T_test, C_in)
 

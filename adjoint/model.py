@@ -162,20 +162,6 @@ class CostFunctionEmbedding(nn.Module):
         return embedding
 
 
-def adjoint_rollout_loss(model, lam_targets):
-    """
-    Compute rollout loss over τ steps.
-    
-    Args:
-        model: AdjointModel
-        lam_targets: [B, τ+1, C_l, H, W] — ground-truth λ from T to T−τ
-    
-    Returns:
-        loss: scalar
-    """
-    lam_pred = model(lam_targets)  # [B, τ+1, C_l, H, W]
-    return torch.nn.functional.mse_loss(lam_pred, lam_targets)
-
 
 def train_adjoint_model(
         model, 
