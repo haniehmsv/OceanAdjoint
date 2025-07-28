@@ -24,3 +24,4 @@ dependencies:
     - cftime==1.5.1.1
     - einops==0.8.0
     - nc-time-axis==1.4.1
+    - netCDF4>=1.6,<1.8
