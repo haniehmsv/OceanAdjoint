@@ -62,6 +62,7 @@ else:
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 # Train the model
+model_save_path = "best_model.pt"
 model.train_adjoint_model(
     model=model_adj,
     dataloader=train_loader,
@@ -70,6 +71,6 @@ model.train_adjoint_model(
     num_epochs=5000,
     patience=200,
     label_embedder=embedder,
-    save_path="best_model.pt",
+    save_path=model_save_path,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 )
