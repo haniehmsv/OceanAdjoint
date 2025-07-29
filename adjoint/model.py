@@ -208,7 +208,7 @@ def train_adjoint_model(
             total_loss = 0.0
 
             for xb, yb, labelb in dataloader:
-                print("check training")
+                # print("check training")
                 xb = xb.to(device)  # shape: (B, C_in, H, W)
                 yb = yb.to(device)  # shape: (B, C_out, H, W)
                 labelb = labelb.to(device)  # shape: (B, C_in)
@@ -284,7 +284,7 @@ def train_adjoint_model(
             total_loss = 0.0
 
             for xb, yb in dataloader:
-                print("check training")
+                # print("check training")
                 xb = xb.to(device)  # shape: (B, C_in, H, W)
                 yb = yb.to(device)  # shape: (B, C_out, H, W)
 

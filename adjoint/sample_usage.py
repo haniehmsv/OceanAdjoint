@@ -110,7 +110,7 @@ model.train_adjoint_model(
     val_loader=test_loader,
     num_epochs=5000,
     patience=200,
-    label_embedder=embedder,
+    label_embedder=None,
     save_path=model_save_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
