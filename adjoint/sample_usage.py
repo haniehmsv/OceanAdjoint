@@ -100,7 +100,7 @@ if os.path.exists(checkpoint_path):
         torch.cuda.set_rng_state(checkpoint["cuda_rng_state"])
     np.random.set_state(checkpoint["numpy_rng_state"])
     random.setstate(checkpoint["python_rng_state"])
-
+    
     print(f"Resuming from epoch {start_epoch}, best_val_loss={best_val_loss:.6f}")
 
 model.train_adjoint_model(
