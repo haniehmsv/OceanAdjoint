@@ -455,7 +455,6 @@ def generate_adjoint_one(model, x_true, y_true, wet=None):
         x_true: [B, C_in, H, W] or [C_in, H, W]     # adjoint at time step t
         y_true: [B, C_out, H, W] or [C_out, H, W]   # ground truth adjoint at time step t-1
         wet: optional [H, W] mask
-        train: bool
     
     Returns:
         y_pred: [B, C_out, H, W] or [C_out, H, W]   # adjoint at time step t-1
@@ -491,7 +490,6 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None):
         model: trained AdjointModel
         x_seq_true: [B, T, C_in, H, W] or [T, C_in, H, W] -> ordered [λ(T), λ(T−1), ..., λ(T−τ)]
         wet: optional [H, W] mask
-        train: bool
     
     Returns:
         y_seq: [B, T-1, C_out, H, W] or [T-1, C_out, H, W] - from λ(T-1) to λ(T−τ)
