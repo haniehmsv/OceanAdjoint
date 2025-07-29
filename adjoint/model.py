@@ -526,4 +526,4 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, train=False):
         y_seq = y_seq.squeeze(0)  # return to [T, C_out, H, W]
         y_seq_true = y_seq_true.squeeze(0)  # return to [T-1, C_in, H, W]
 
-    return y_seq_true,y_seq.cpu()
+    return y_seq_true, y_seq.cpu()
