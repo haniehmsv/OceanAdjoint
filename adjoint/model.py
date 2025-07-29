@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import random
 from itertools import tee
 
 def pairwise(iterable):
@@ -168,6 +169,10 @@ def save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt"
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "best_val_loss": best_val_loss,
+        "torch_rng_state": torch.get_rng_state(),
+        "cuda_rng_state": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+        "numpy_rng_state": np.random.get_state(),
+        "python_rng_state": random.getstate(),
     }, path)
     print(f"Checkpoint saved at epoch {epoch} → {path}")
 

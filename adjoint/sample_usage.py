@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import numpy as np
 import xarray as xr
+import random
 import sys
 import os
 
@@ -9,6 +10,16 @@ import os
 sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only/OceanAdjoint/adjoint")
 import model
 import data_loaders
+
+# Set global seed for reproducibility
+seed = 42
+torch.manual_seed(seed)
+np.random.seed(seed)
+random.seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 labels = None
@@ -48,8 +59,12 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
 train_ds, test_ds = loader.get_datasets()
 train_norm, test_norm = loader.get_norms()
 
-train_loader = torch.utils.data.DataLoader(train_ds, batch_size=16, shuffle=True)
-test_loader  = torch.utils.data.DataLoader(test_ds, batch_size=16, shuffle=False)
+# DataLoader with reproducible shuffling
+g = torch.Generator()
+g.manual_seed(seed)
+
+train_loader = torch.utils.data.DataLoader(train_ds, batch_size=16, shuffle=True, generator=g, num_workers=0)
+test_loader  = torch.utils.data.DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=0)
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
@@ -78,6 +93,14 @@ if os.path.exists(checkpoint_path):
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     best_val_loss = checkpoint["best_val_loss"]
     start_epoch = checkpoint["epoch"] + 1
+
+    # Restore RNG states for exact reproducibility
+    torch.set_rng_state(checkpoint["torch_rng_state"])
+    if torch.cuda.is_available() and "cuda_rng_state" in checkpoint:
+        torch.cuda.set_rng_state(checkpoint["cuda_rng_state"])
+    np.random.set_state(checkpoint["numpy_rng_state"])
+    random.setstate(checkpoint["python_rng_state"])
+    
     print(f"Resuming from epoch {start_epoch}, best_val_loss={best_val_loss:.6f}")
 
 model.train_adjoint_model(
