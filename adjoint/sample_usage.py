@@ -72,7 +72,16 @@ train_loader = DataLoader(
     prefetch_factor=2,   # each worker preloads batches ahead of time
     persistent_workers=True  # workers stay alive between epochs
 )
-test_loader  = DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=0)
+
+test_loader = DataLoader(
+    test_ds,
+    batch_size=32,
+    shuffle=False,        # deterministic evaluation
+    num_workers=2,        # match training for throughput
+    pin_memory=True,
+    prefetch_factor=2,
+    persistent_workers=True
+)
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
