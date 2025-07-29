@@ -1,9 +1,15 @@
-import model
-import data_loaders
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
 import xarray as xr
+import sys
+import os
+
+# add OceanAdjoint to path
+sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only/OceanAdjoint/adjoint")
+import model
+import data_loaders
+
 
 labels = None
 C_in = 1
@@ -62,7 +68,18 @@ else:
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 # Train the model
-model_save_path = "best_model.pt"
+model_save_path = "ssh_only_pred_residual.pt"
+checkpoint_path = "checkpoint.pt"
+start_epoch = 1
+best_val_loss = float("inf")
+if os.path.exists(checkpoint_path):
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    model_adj.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    best_val_loss = checkpoint["best_val_loss"]
+    start_epoch = checkpoint["epoch"] + 1
+    print(f"Resuming from epoch {start_epoch}, best_val_loss={best_val_loss:.6f}")
+
 model.train_adjoint_model(
     model=model_adj,
     dataloader=train_loader,
@@ -72,5 +89,7 @@ model.train_adjoint_model(
     patience=200,
     label_embedder=embedder,
     save_path=model_save_path,
+    start_epoch=start_epoch,
+    best_val_loss=best_val_loss,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 )

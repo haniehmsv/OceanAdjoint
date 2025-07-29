@@ -162,6 +162,16 @@ class CostFunctionEmbedding(nn.Module):
         return embedding
 
 
+def save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt"):
+    torch.save({
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "best_val_loss": best_val_loss,
+    }, path)
+    print(f"Checkpoint saved at epoch {epoch} → {path}")
+
+
 
 def train_adjoint_model(
         model, 
@@ -172,20 +182,22 @@ def train_adjoint_model(
         num_epochs=50, 
         scheduler=None, 
         log_every=1,
+        checkpoint_every=50,
         val_loader=None,
         early_stopping=True,
         patience=5,
-        save_path=None
+        save_path=None,
+        start_epoch=1,
+        best_val_loss=float("inf")
         ):
     model.to(device)
-    best_val_loss = float("inf")
-    best_epoch = 0
+    best_epoch = start_epoch - 1
     no_improve_count = 0
 
     use_labels = True if label_embedder is not None else False
 
     if use_labels:
-        for epoch in range(1, num_epochs + 1):
+        for epoch in range(start_epoch, num_epochs + 1):
             # === Training ===
             model.train()
             total_loss = 0.0
@@ -256,9 +268,12 @@ def train_adjoint_model(
                 if avg_val_loss is not None:
                     msg += f" | Val Loss: {avg_val_loss:.6f}"
                 print(msg)
+            
+            if save_path and epoch % checkpoint_every == 0:
+                save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt")
 
     else:
-        for epoch in range(1, num_epochs + 1):
+        for epoch in range(start_epoch, num_epochs + 1):
             # === Training ===
             model.train()
             total_loss = 0.0
@@ -319,6 +334,9 @@ def train_adjoint_model(
                 if avg_val_loss is not None:
                     msg += f" | Val Loss: {avg_val_loss:.6f}"
                 print(msg)
+
+            if save_path and epoch % checkpoint_every == 0:
+                save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt")
 
         
 
