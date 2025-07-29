@@ -68,7 +68,7 @@ test_loader  = torch.utils.data.DataLoader(test_ds, batch_size=16, shuffle=False
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
-_, H, W = sample_x.shape[-2], sample_x.shape[-1]
+_, H, W = sample_x.shape
 
 # Create label embedding
 embed_dim = 8
@@ -100,7 +100,7 @@ if os.path.exists(checkpoint_path):
         torch.cuda.set_rng_state(checkpoint["cuda_rng_state"])
     np.random.set_state(checkpoint["numpy_rng_state"])
     random.setstate(checkpoint["python_rng_state"])
-    
+
     print(f"Resuming from epoch {start_epoch}, best_val_loss={best_val_loss:.6f}")
 
 model.train_adjoint_model(
