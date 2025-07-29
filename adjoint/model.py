@@ -187,6 +187,7 @@ def train_adjoint_model(
         num_epochs=50, 
         scheduler=None, 
         log_every=1,
+        save_every=10,
         checkpoint_every=50,
         val_loader=None,
         early_stopping=True,
@@ -209,9 +210,9 @@ def train_adjoint_model(
 
             for xb, yb, labelb in dataloader:
                 # print("check training")
-                xb = xb.to(device)  # shape: (B, C_in, H, W)
-                yb = yb.to(device)  # shape: (B, C_out, H, W)
-                labelb = labelb.to(device)  # shape: (B, C_in)
+                xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
+                yb = yb.to(device, non_blocking=True)  # shape: (B, C_out, H, W)
+                labelb = labelb.to(device, non_blocking=True)  # shape: (B, C_in)
 
                 # Scaling
                 alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
@@ -240,9 +241,9 @@ def train_adjoint_model(
                 val_loss = 0.0
                 with torch.no_grad():
                     for xb, yb, labelb in val_loader:
-                        xb = xb.to(device)
-                        yb = yb.to(device)
-                        labelb = labelb.to(device)
+                        xb = xb.to(device, non_blocking=True)
+                        yb = yb.to(device, non_blocking=True)
+                        labelb = labelb.to(device, non_blocking=True)
                         onehot = labelb.float()  #torch.nn.functional.one_hot(labelb, num_classes=label_embedder.enc_dim).float()  # (B, C_in)
                         embed = label_embedder(onehot, batch_size=xb.shape[0])  # (B, embed_dim, H, W)
                         xb = torch.cat([xb, embed], dim=1)  # (B, C_in+embed_dim, H, W)
@@ -256,7 +257,7 @@ def train_adjoint_model(
                     best_val_loss = avg_val_loss
                     best_epoch = epoch
                     no_improve_count = 0
-                    if save_path:
+                    if save_path and epoch % save_every == 0:
                         torch.save(model.state_dict(), save_path)
                 else:
                     no_improve_count += 1
@@ -285,8 +286,8 @@ def train_adjoint_model(
 
             for xb, yb in dataloader:
                 # print("check training")
-                xb = xb.to(device)  # shape: (B, C_in, H, W)
-                yb = yb.to(device)  # shape: (B, C_out, H, W)
+                xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
+                yb = yb.to(device, non_blocking=True)  # shape: (B, C_out, H, W)
 
                 # Scaling
                 alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
@@ -310,8 +311,8 @@ def train_adjoint_model(
                 val_loss = 0.0
                 with torch.no_grad():
                     for xb, yb in val_loader:
-                        xb = xb.to(device)
-                        yb = yb.to(device)
+                        xb = xb.to(device, non_blocking=True)
+                        yb = yb.to(device, non_blocking=True)
                         pred = model(xb)
                         loss = torch.nn.functional.mse_loss(pred, yb)
                         val_loss += loss.item()
@@ -322,7 +323,7 @@ def train_adjoint_model(
                     best_val_loss = avg_val_loss
                     best_epoch = epoch
                     no_improve_count = 0
-                    if save_path:
+                    if save_path and epoch % save_every == 0:
                         torch.save(model.state_dict(), save_path)
                 else:
                     no_improve_count += 1

@@ -19,7 +19,7 @@ random.seed(seed)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
 
 
 labels = None
@@ -37,7 +37,7 @@ idx_out_test = [9]
 wet_mask_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='wet_mask',
-    device="cuda",
+    device="cpu",
     engine="netcdf4"
 )
 wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
@@ -53,7 +53,7 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_in_test=idx_in_test,
     idx_out_test=idx_out_test,
     label=None,
-    device="cuda"
+    device="cpu"
 )
 
 train_ds, test_ds = loader.get_datasets()
@@ -63,8 +63,16 @@ train_norm, test_norm = loader.get_norms()
 g = torch.Generator()
 g.manual_seed(seed)
 
-train_loader = torch.utils.data.DataLoader(train_ds, batch_size=16, shuffle=True, generator=g, num_workers=0)
-test_loader  = torch.utils.data.DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=0)
+train_loader = DataLoader(
+    train_ds,
+    batch_size=16,
+    shuffle=True,
+    num_workers=2,       # >0 enables CPU-side parallel loading
+    pin_memory=True,     # speeds up CPU→GPU transfer
+    prefetch_factor=2,   # each worker preloads batches ahead of time
+    persistent_workers=True  # workers stay alive between epochs
+)
+test_loader  = DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=0)
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
