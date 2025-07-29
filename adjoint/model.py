@@ -446,7 +446,7 @@ class AdjointModel(torch.nn.Module):
 
 ### Modify these functions for your use case
 
-def generate_adjoint_one(model, x_true, y_true, wet=None, train=False):
+def generate_adjoint_one(model, x_true, y_true, wet=None):
     """
     Run backward adjoint rollout using trained model.
     
@@ -483,7 +483,7 @@ def generate_adjoint_one(model, x_true, y_true, wet=None, train=False):
     return y_true, y_pred.cpu()
 
 
-def generate_adjoint_rollout(model, x_seq_true, wet=None, train=False):
+def generate_adjoint_rollout(model, x_seq_true, wet=None):
     """
     Run backward adjoint rollout using trained model.
     

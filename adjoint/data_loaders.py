@@ -3,53 +3,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, TensorDataset
 
-class AdjointDataset(torch.utils.data.Dataset):
-    def __init__(self, x, y, labels=None):
-        """
-        Args:
-            x: tensor of shape (N_samples, T, 2, H, W) – input adjoints, note that N_samples is the number of spatial sample points * 2 (one for SSH and one for OBP)
-            y: tensor of shape (N_samples, T, 4, H, W) – output adjoints
-            labels: tensor of shape (N_samples,) with values 0 (OBP) or 1 (SSH)
-        """
-        super().__init__()
-        self.N, self.T, self.C_in, self.H, self.W = x.shape
-        self.labels = labels
-        # self.label_embedder = label_embedder
-
-        # Store output
-        self.y_flat = y.reshape(-1, y.shape[2], self.H, self.W)  # (N*T, 4, H, W)
-
-        # --- Efficient label embedding ---
-        # onehot_labels = torch.nn.functional.one_hot(labels, num_classes=2).float()  # (N, 2)
-        # with torch.no_grad():
-        #     label_embed = self.label_embedder(onehot_labels, batch_size=self.N) # (N, embed_dim, H, W)
-
-        # Expand to temporal shape: (N, T, embed_dim, H, W)
-        # label_embed = label_embed.unsqueeze(1).expand(-1, self.T, -1, -1, -1)
-
-        # Concatenate along channel dimension: (N, T, C_in + embed_dim, H, W)
-        # x_with_label = torch.cat([x, label_embed], dim=2)
-
-        # Flatten temporal dimension: (N*T, C_in + embed_dim, H, W)
-        self.x_flat = x.reshape(-1, x.shape[2], self.H, self.W)
-
-        # Flatten labels to match x_flat: repeat each label T times
-        if self.labels is not None:
-            self.label_flat = labels.repeat_interleave(self.T)   # (N*T,)
-        else:
-            self.label_flat = None
-
-    def __len__(self):
-        return self.x_flat.shape[0]
-
-    def __getitem__(self, idx):
-        if self.label_flat is not None:
-            return self.x_flat[idx], self.y_flat[idx], self.label_flat[idx]
-        else:
-            return self.x_flat[idx], self.y_flat[idx]
-
-
-
 class AdjointDatasetFromNetCDF:
     def __init__(self, 
                  data_path,                  # Path to NetCDF file
