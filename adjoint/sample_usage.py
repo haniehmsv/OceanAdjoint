@@ -106,7 +106,6 @@ else:
 model_adj = DDP(model_adj, device_ids=[local_rank])
 
 # Train the model
-model_save_path = "ssh_only_batch_16.pt"
 checkpoint_path = "checkpoint_batch_16.pt"
 start_epoch = 1
 best_val_loss = float("inf")
