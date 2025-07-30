@@ -38,24 +38,24 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None):
         x_seq_true = x_seq_true.unsqueeze(0)  # → [1, T, C_in, H, W]
         added_batch_dim = True
 
-    y_seq_true = x_seq_true[:, 1:]  # λ(T-1) to λ(T-τ) shape: [B, T-1, C_in, H, W]
+    y_seq_true = x_seq_true[:, 1:] * wet  # λ(T-1) to λ(T-τ) shape: [B, T-1, C_in, H, W]
 
     x_seq_true = x_seq_true.to(device)
     B, T, C_in, H, W = x_seq_true.shape
     preds = []
-    input = x_seq_true[:, 0]  # λ(T) shape: [B, C_in, H, W]
+    input = x_seq_true[:, 0].clone()  # λ(T) shape: [B, C_in, H, W]
     norms = normalization_constants(input).view(-1, 1, 1, 1)
     input /= norms  # Normalize input by its norm
 
     with torch.no_grad():
         for t in range(T-1):
             y_t = model(input)  # shape: [B, C_out, H, W]
-            y_t = y_t * norms
+            y_t *= norms
             if wet is not None:
-                y_t = y_t * wet.to(device)
+                y_t *= wet.to(device)
 
             preds.append(y_t)
-            input = y_t[:,:C_in]
+            input = y_t[:,:C_in].clone()
             norms = normalization_constants(input).view(-1, 1, 1, 1)
             input /= norms
 
@@ -65,4 +65,4 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None):
         y_seq = y_seq.squeeze(0)  # return to [T, C_out, H, W]
         y_seq_true = y_seq_true.squeeze(0)  # return to [T-1, C_in, H, W]
 
-    return y_seq_true, y_seq.cpu()
+    return y_seq_true.cpu(), y_seq.cpu()
