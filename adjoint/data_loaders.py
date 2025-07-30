@@ -1,7 +1,27 @@
 import xarray as xr
 import numpy as np
 import torch
-from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset, DistributedSampler
+
+
+def get_distributed_loaders(train_ds, test_ds, batch_size, num_workers=4):
+    """
+    Wraps datasets with DistributedSampler for multi-node training.
+    """
+    train_sampler = DistributedSampler(train_ds, shuffle=True)
+    test_sampler = DistributedSampler(test_ds, shuffle=False)
+
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, sampler=train_sampler,
+        num_workers=num_workers, pin_memory=True
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=batch_size, sampler=test_sampler,
+        num_workers=num_workers, pin_memory=True
+    )
+
+    return train_loader, test_loader, train_sampler, test_sampler
+
 
 class AdjointDatasetFromNetCDF:
     def __init__(self, 

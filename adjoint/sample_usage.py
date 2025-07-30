@@ -5,6 +5,9 @@ import xarray as xr
 import random
 import sys
 import os
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 
 # add OceanAdjoint to path
 sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only/OceanAdjoint/adjoint")
@@ -16,10 +19,16 @@ seed = 42
 torch.manual_seed(seed)
 np.random.seed(seed)
 random.seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+torch.cuda.manual_seed_all(seed)
+
+def init_distributed_mode():
+    dist.init_process_group(
+        backend="nccl",   # use "gloo" if CPUs
+        init_method="env://"
+    )
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    return torch.device("cuda", local_rank), local_rank
 
 
 labels = None
@@ -33,11 +42,14 @@ idx_out_train = [6]
 idx_in_test = [6]
 idx_out_test = [9]
 
+# === Distributed init ===
+device, local_rank = init_distributed_mode()
+
 # load wet mask
 wet_mask_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='wet_mask',
-    device="cpu",
+    device=device,
     engine="netcdf4"
 )
 wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
@@ -53,35 +65,27 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_in_test=idx_in_test,
     idx_out_test=idx_out_test,
     label=None,
-    device="cpu"
+    device=device
 )
 
 train_ds, test_ds = loader.get_datasets()
+train_loader, test_loader, train_sampler, test_sampler = data_loaders.get_distributed_loaders(
+    train_ds, test_ds, batch_size=16, num_workers=4
+)
+
+test_loader = torch.utils.data.DataLoader(
+    test_ds,
+    batch_size=64,      # larger for validation
+    sampler=test_sampler,
+    num_workers=4,
+    pin_memory=True
+)
 train_norm, test_norm = loader.get_norms()
 
 # DataLoader with reproducible shuffling
 g = torch.Generator()
 g.manual_seed(seed)
 
-train_loader = DataLoader(
-    train_ds,
-    batch_size=16,
-    shuffle=True,
-    num_workers=2,       # >0 enables CPU-side parallel loading
-    pin_memory=True,     # speeds up CPU→GPU transfer
-    prefetch_factor=2,   # each worker preloads batches ahead of time
-    persistent_workers=True  # workers stay alive between epochs
-)
-
-test_loader = DataLoader(
-    test_ds,
-    batch_size=64,
-    shuffle=False,        # deterministic evaluation
-    num_workers=2,        # match training for throughput
-    pin_memory=True,
-    prefetch_factor=2,
-    persistent_workers=True
-)
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
@@ -93,20 +97,24 @@ embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatia
 
 # Initialize model
 if labels is not None:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out), pred_residual=pred_residual)
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out), pred_residual=pred_residual).to(device)
     optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
 else:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out), pred_residual=pred_residual)
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out), pred_residual=pred_residual).to(device)
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+
+model_adj = DDP(model_adj, device_ids=[local_rank])
 
 # Train the model
 model_save_path = "ssh_only_batch_16.pt"
 checkpoint_path = "checkpoint_batch_16.pt"
 start_epoch = 1
 best_val_loss = float("inf")
+
 if os.path.exists(checkpoint_path):
-    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    model_adj.load_state_dict(checkpoint["model_state_dict"])
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model_to_load = model_adj.module if hasattr(model_adj, "module") else model_adj
+    model_to_load.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     best_val_loss = checkpoint["best_val_loss"]
     start_epoch = checkpoint["epoch"] + 1
@@ -128,9 +136,9 @@ model.train_adjoint_model(
     num_epochs=1000,
     patience=10,
     label_embedder=None,
-    save_path=model_save_path,
     checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 )
+dist.destroy_process_group()
