@@ -19,7 +19,7 @@ random.seed(seed)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
 
 
 labels = None
@@ -75,7 +75,7 @@ train_loader = DataLoader(
 
 test_loader = DataLoader(
     test_ds,
-    batch_size=32,
+    batch_size=64,
     shuffle=False,        # deterministic evaluation
     num_workers=2,        # match training for throughput
     pin_memory=True,
@@ -100,8 +100,8 @@ else:
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 # Train the model
-model_save_path = "ssh_only_pred_residual.pt"
-checkpoint_path = "checkpoint.pt"
+model_save_path = "ssh_only_batch_16.pt"
+checkpoint_path = "checkpoint_batch_16.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 if os.path.exists(checkpoint_path):
@@ -125,10 +125,11 @@ model.train_adjoint_model(
     dataloader=train_loader,
     optimizer=optimizer,
     val_loader=test_loader,
-    num_epochs=5000,
-    patience=200,
+    num_epochs=1000,
+    patience=10,
     label_embedder=None,
     save_path=model_save_path,
+    checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
