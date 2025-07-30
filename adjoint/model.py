@@ -187,14 +187,15 @@ def train_adjoint_model(
         num_epochs=50, 
         scheduler=None, 
         log_every=1,
-        save_every=10,
-        checkpoint_every=50,
+        save_every=5,
+        checkpoint_every=5,
         val_loader=None,
         early_stopping=True,
         patience=5,
-        save_path=None,
         start_epoch=1,
-        best_val_loss=float("inf")
+        best_val_loss=float("inf"),
+        save_path=None,
+        checkpoint_path=None
         ):
     model.to(device)
     best_epoch = start_epoch - 1
@@ -274,9 +275,9 @@ def train_adjoint_model(
                 if avg_val_loss is not None:
                     msg += f" | Val Loss: {avg_val_loss:.6f}"
                 print(msg)
-            
+
             if save_path and epoch % checkpoint_every == 0:
-                save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt")
+                save_checkpoint(model, optimizer, epoch, best_val_loss, path=checkpoint_path)
 
     else:
         for epoch in range(start_epoch, num_epochs + 1):
@@ -342,7 +343,7 @@ def train_adjoint_model(
                 print(msg)
 
             if save_path and epoch % checkpoint_every == 0:
-                save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt")
+                save_checkpoint(model, optimizer, epoch, best_val_loss, path=checkpoint_path)
 
         
 
