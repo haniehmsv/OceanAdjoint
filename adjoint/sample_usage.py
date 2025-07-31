@@ -56,6 +56,11 @@ wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
 
 
 # load data
+
+# DataLoader with reproducible shuffling
+g = torch.Generator()
+g.manual_seed(seed)
+
 loader = data_loaders.AdjointDatasetFromNetCDF(
     data_path=data_path,
     var_name='etan_ad',
@@ -70,7 +75,7 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
 
 train_ds, test_ds = loader.get_datasets()
 train_loader, test_loader, train_sampler, test_sampler = data_loaders.get_distributed_loaders(
-    train_ds, test_ds, batch_size=16, num_workers=4
+    train_ds, test_ds, batch_size=16, num_workers=4, generator=g
 )
 
 test_loader = torch.utils.data.DataLoader(
@@ -78,13 +83,10 @@ test_loader = torch.utils.data.DataLoader(
     batch_size=64,      # larger for validation
     sampler=test_sampler,
     num_workers=4,
-    pin_memory=True
+    pin_memory=True,
+    generator=g
 )
 train_norm, test_norm = loader.get_norms()
-
-# DataLoader with reproducible shuffling
-g = torch.Generator()
-g.manual_seed(seed)
 
 
 # Get first batch of data to infer H, W

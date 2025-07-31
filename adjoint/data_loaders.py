@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset, DistributedSampler
 
 
-def get_distributed_loaders(train_ds, test_ds, batch_size, num_workers=4):
+def get_distributed_loaders(train_ds, test_ds, batch_size, num_workers=4, generator=None):
     """
     Wraps datasets with DistributedSampler for multi-node training.
     """
@@ -13,11 +13,11 @@ def get_distributed_loaders(train_ds, test_ds, batch_size, num_workers=4):
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, sampler=train_sampler,
-        num_workers=num_workers, pin_memory=True
+        num_workers=num_workers, pin_memory=True, generator=generator
     )
     test_loader = DataLoader(
         test_ds, batch_size=batch_size, sampler=test_sampler,
-        num_workers=num_workers, pin_memory=True
+        num_workers=num_workers, pin_memory=True, generator=generator
     )
 
     return train_loader, test_loader, train_sampler, test_sampler
