@@ -41,7 +41,7 @@ class AdjointDatasetFromNetCDF:
         # Load the NetCDF file
         ds = xr.open_dataset(data_path, engine=engine)
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
-        data = torch.tensor(data, dtype=torch.float32).to(device)
+        data = torch.tensor(data, dtype=torch.float32)
 
         N, T, C_out, H, W = data.shape
         x_train = data[:, idx_in_train, :C_in]                      # (N, T_train, C_in, H, W)
