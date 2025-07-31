@@ -100,12 +100,11 @@ else:
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 # Train the model
-model_save_path = "ssh_only_batch_16.pt"
-checkpoint_path = "checkpoint_batch_16.pt"
+save_path = "ssh_only_batch_16.pt"
 start_epoch = 1
 best_val_loss = float("inf")
-if os.path.exists(checkpoint_path):
-    checkpoint = torch.load(checkpoint_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+if os.path.exists(save_path):
+    checkpoint = torch.load(save_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     model_adj.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     best_val_loss = checkpoint["best_val_loss"]
@@ -128,8 +127,7 @@ model.train_adjoint_model(
     num_epochs=1000,
     patience=10,
     label_embedder=None,
-    save_path=model_save_path,
-    checkpoint_path=checkpoint_path,
+    save_path=save_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
