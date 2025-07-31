@@ -108,7 +108,7 @@ else:
 model_adj = DDP(model_adj, device_ids=[local_rank])
 
 # Train the model
-checkpoint_path = "checkpoint_batch_16.pt"
+checkpoint_path = "checkpoints/checkpoint_small_data_one_pair.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
