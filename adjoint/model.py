@@ -444,6 +444,6 @@ class AdjointModel(torch.nn.Module):
             preds:       [B, C_out, H, W]
         """
         pred = self.model.forward_once(x_true)  # [B, C_out, H, W]
-        if self.pred_residual is False:
+        if not self.pred_residual:
             pred = pred + x_true[:, :pred.shape[1]]  # add residual to matching input channels
         return pred
