@@ -164,13 +164,14 @@ class CostFunctionEmbedding(nn.Module):
         return embedding
 
 
-def save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt"):
+def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="checkpoint.pt"):
     if not dist.is_initialized() or dist.get_rank() == 0:  # Only rank 0 saves
         state_dict = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
         torch.save({
             "epoch": epoch,
             "model_state_dict": state_dict,
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
             "best_val_loss": best_val_loss,
         }, path)
         print(f"[Rank {dist.get_rank() if dist.is_initialized() else 0}] Checkpoint saved at epoch {epoch} → {path}")
@@ -261,7 +262,7 @@ def train_adjoint_model(
                     best_epoch = epoch
                     no_improve_count = 0
                     if checkpoint_path and epoch % checkpoint_every == 0:
-                        save_checkpoint(model, optimizer, epoch, best_val_loss, path=checkpoint_path)
+                        save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
                 else:
                     no_improve_count += 1
                     if early_stopping and no_improve_count >= patience:
@@ -331,7 +332,7 @@ def train_adjoint_model(
                     best_epoch = epoch
                     no_improve_count = 0
                     if checkpoint_path and epoch % checkpoint_every == 0:
-                        save_checkpoint(model, optimizer, epoch, best_val_loss, path=checkpoint_path)
+                        save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
                 else:
                     no_improve_count += 1
                     if early_stopping and no_improve_count >= patience:

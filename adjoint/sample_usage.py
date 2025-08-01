@@ -7,6 +7,7 @@ import sys
 import os
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 # add OceanAdjoint to path
@@ -41,6 +42,7 @@ idx_in_train = [3]
 idx_out_train = [6]
 idx_in_test = [6]
 idx_out_test = [9]
+n_epochs = 100
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -65,6 +67,7 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_in_test=idx_in_test,
     idx_out_test=idx_out_test,
     label=None,
+    pred_residual=pred_residual,
     device=device
 )
 
@@ -102,15 +105,16 @@ embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatia
 world_size = dist.get_world_size()
 if labels is not None:
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out), pred_residual=pred_residual).to(device)
-    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=2e-4, weight_decay=1e-5)
 else:
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out), pred_residual=pred_residual).to(device)
-    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=2e-4, weight_decay=1e-5)
 
 model_adj = DDP(model_adj, device_ids=[local_rank])
+scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
 
 # Train the model
-checkpoint_path = "checkpoints/checkpoint_small_data_one_pair.pt"
+checkpoint_path = "checkpoints/checkpoint_small_data_one_pair_pred_residual.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
@@ -119,6 +123,8 @@ if os.path.exists(checkpoint_path):
     model_to_load = model_adj.module if hasattr(model_adj, "module") else model_adj
     model_to_load.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    if scheduler is not None and checkpoint.get("scheduler_state_dict") is not None:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     best_val_loss = checkpoint["best_val_loss"]
     start_epoch = checkpoint["epoch"] + 1
     
@@ -129,7 +135,8 @@ model.train_adjoint_model(
     dataloader=train_loader,
     optimizer=optimizer,
     val_loader=test_loader,
-    num_epochs=1000,
+    num_epochs=n_epochs,
+    scheduler=scheduler,
     patience=20,
     label_embedder=None,
     checkpoint_path=checkpoint_path,
