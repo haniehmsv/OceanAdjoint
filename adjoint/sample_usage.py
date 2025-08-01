@@ -73,13 +73,16 @@ train_loader, test_loader, train_sampler, test_sampler = data_loaders.get_distri
     train_ds, test_ds, batch_size=16, num_workers=4
 )
 
-test_loader = torch.utils.data.DataLoader(
-    test_ds,
-    batch_size=64,      # larger for validation
-    sampler=test_sampler,
-    num_workers=4,
-    pin_memory=True
-)
+if dist.get_rank() == 0:  # only run validation on rank 0
+    test_loader = torch.utils.data.DataLoader(
+        test_ds,
+        batch_size=64,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True
+    )
+else:
+    test_loader = None
 train_norm, test_norm = loader.get_norms()
 
 # DataLoader with reproducible shuffling
@@ -117,13 +120,6 @@ if os.path.exists(checkpoint_path):
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     best_val_loss = checkpoint["best_val_loss"]
     start_epoch = checkpoint["epoch"] + 1
-
-    # Restore RNG states for exact reproducibility
-    torch.set_rng_state(checkpoint["torch_rng_state"])
-    if torch.cuda.is_available() and "cuda_rng_state" in checkpoint:
-        torch.cuda.set_rng_state(checkpoint["cuda_rng_state"])
-    np.random.set_state(checkpoint["numpy_rng_state"])
-    random.setstate(checkpoint["python_rng_state"])
     
     print(f"Resuming from epoch {start_epoch}, best_val_loss={best_val_loss:.6f}")
 

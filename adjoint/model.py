@@ -172,10 +172,6 @@ def save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt"
             "model_state_dict": state_dict,
             "optimizer_state_dict": optimizer.state_dict(),
             "best_val_loss": best_val_loss,
-            "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-            "numpy_rng_state": np.random.get_state(),
-            "python_rng_state": random.getstate(),
         }, path)
         print(f"[Rank {dist.get_rank() if dist.is_initialized() else 0}] Checkpoint saved at epoch {epoch} → {path}")
     
@@ -190,7 +186,7 @@ def train_adjoint_model(
         num_epochs=50, 
         scheduler=None, 
         log_every=1,
-        checkpoint_every=5,
+        checkpoint_every=1,
         val_loader=None,
         early_stopping=True,
         patience=5,
@@ -234,7 +230,10 @@ def train_adjoint_model(
                 loss.backward()
                 optimizer.step()
 
-                total_loss += loss.item()
+                # synchronize this batch’s loss across all ranks
+                loss_tensor = loss.detach()
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+                total_loss += loss_tensor.item() / dist.get_world_size()
             
             avg_train_loss = total_loss / len(dataloader)
 
@@ -305,7 +304,10 @@ def train_adjoint_model(
                 loss.backward()
                 optimizer.step()
 
-                total_loss += loss.item()
+                # synchronize this batch’s loss across all ranks
+                loss_tensor = loss.detach()
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+                total_loss += loss_tensor.item() / dist.get_world_size()
             
             avg_train_loss = total_loss / len(dataloader)
 
