@@ -431,9 +431,10 @@ class AdjointNet(BaseAdjointNet):
 
 
 class AdjointModel(torch.nn.Module):
-    def __init__(self, backbone):
+    def __init__(self, backbone, pred_residual=False):
         super().__init__()
         self.model = backbone
+        self.pred_residual = pred_residual
 
     def forward(self, x_true):
         """
@@ -443,4 +444,6 @@ class AdjointModel(torch.nn.Module):
             preds:       [B, C_out, H, W]
         """
         pred = self.model.forward_once(x_true)  # [B, C_out, H, W]
+        if self.pred_residual is False:
+            pred = pred + x_true[:, :pred.shape[1]]  # add residual to matching input channels
         return pred
