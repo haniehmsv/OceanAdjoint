@@ -7,7 +7,7 @@ import sys
 import os
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
 
 # add OceanAdjoint to path
@@ -35,14 +35,14 @@ def init_distributed_mode():
 labels = None
 C_in = 1
 C_out = 1
-pred_residual = False
-data_path = "/nobackupp17/ifenty/AD_ML/2025-07-25/etan_ad_20250725.nc"
+pred_residual = True
+data_path = "/nobackupp17/ifenty/AD_ML/2025-07-28/etan_ad_20250728b_combined.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
-idx_in_train = [3]
-idx_out_train = [6]
+idx_in_train = [3,4,5]
+idx_out_train = [6,7,8]
 idx_in_test = [6]
 idx_out_test = [9]
-n_epochs = 100
+n_epochs = 1000
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -105,16 +105,18 @@ embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatia
 world_size = dist.get_world_size()
 if labels is not None:
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out), pred_residual=pred_residual).to(device)
-    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=2e-4)
+    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
 else:
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out), pred_residual=pred_residual).to(device)
-    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=2e-4)
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 model_adj = DDP(model_adj, device_ids=[local_rank])
-scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
+
+# scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
+scheduler = None
 
 # Train the model
-checkpoint_path = "checkpoints/checkpoint_small_data_one_pair_scheduler.pt"
+checkpoint_path = "checkpoints/checkpoint_all_data_all_pair.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
