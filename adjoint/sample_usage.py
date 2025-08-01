@@ -99,6 +99,7 @@ embed_dim = 8
 embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
 
 # Initialize model
+world_size = dist.get_world_size()
 if labels is not None:
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out), pred_residual=pred_residual).to(device)
     optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
@@ -129,7 +130,7 @@ model.train_adjoint_model(
     optimizer=optimizer,
     val_loader=test_loader,
     num_epochs=1000,
-    patience=10,
+    patience=20,
     label_embedder=None,
     checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,

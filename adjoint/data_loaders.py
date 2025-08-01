@@ -33,6 +33,7 @@ class AdjointDatasetFromNetCDF:
                  idx_in_test,                # Temporal index of input variable in test set
                  idx_out_test,               # Temporal index of output variable in test set
                  label=None,                 # Optional variable name for labels
+                 pred_residual=False,        # Whether to predict residuals
                  device="cpu",               # Optional torch device
                  engine="netcdf4"            # Engine to use for reading NetCDF
                 ):
@@ -49,6 +50,10 @@ class AdjointDatasetFromNetCDF:
         x_test  = data[:, idx_in_test, :C_in]                       # (N, T_test, C_in, H, W)
         y_test  = data[:, idx_out_test]                             # (N, T_test, C_out, H, W)
 
+        if pred_residual:
+            print(f"pred_residual=True → C_in={C_in}, C_out={C_out}")
+            y_train[:, :, :C_in] = y_train[:, :, :C_in] - x_train                # Predict residuals
+            y_test[:, :, :C_in] = y_test[:, :, :C_in] - x_test
 
         # Flatten spatial targets and time: (N*T, C, H, W)
         self.x_train = x_train.reshape(-1, C_in, H, W)
