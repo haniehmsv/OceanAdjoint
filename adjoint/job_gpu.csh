@@ -1,5 +1,5 @@
 #PBS -S /bin/csh
-#PBS -q p_gpu_normal
+#PBS -q gpu_normal
 #PBS -l select=1:ncpus=48:ngpus=4:mem=320GB:model=mil_a100
 #PBS -l place=scatter:excl
 #PBS -l walltime=12:00:00
