@@ -104,10 +104,10 @@ embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatia
 # Initialize model
 world_size = dist.get_world_size()
 if labels is not None:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out), pred_residual=pred_residual).to(device)
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out)).to(device)
     optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
 else:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out), pred_residual=pred_residual).to(device)
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 model_adj = DDP(model_adj, device_ids=[local_rank])
