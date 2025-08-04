@@ -41,6 +41,7 @@ wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
 controls_path = "/nobackupp17/ifenty/AD_ML/2025-07-30b_adcontrols/consolidated"
 u_stress_path = os.path.join(controls_path, "ustress_ad_2025-07-31.nc")
 v_stress_path = os.path.join(controls_path, "vstress_ad_2025-07-31.nc")
+eta_ad_500_val_points_path = "/nobackupp17/ifenty/AD_ML/2025-07-30/500_etan_validation_points/etan_ad_500_validation_point.nc"
 idx_in_train = [3,4,5]
 idx_out_train = [6,7,8]
 idx_in_test = [6]
