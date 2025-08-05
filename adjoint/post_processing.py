@@ -16,7 +16,7 @@ def normalization_constants(input):
     return norms
 
 
-def generate_adjoint_rollout(model, x_seq_true, wet=None):
+def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False):
     """
     Run backward adjoint rollout using trained model.
     
@@ -50,6 +50,8 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None):
     with torch.no_grad():
         for t in range(T-1):
             y_t = model(input)  # shape: [B, C_out, H, W]
+            if pred_residual:
+                y_t[:, :C_in] = y_t[:, :C_in] + input
             y_t *= norms
             if wet is not None:
                 y_t *= wet.to(device)
