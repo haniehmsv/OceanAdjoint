@@ -1,7 +1,27 @@
 import xarray as xr
 import numpy as np
 import torch
-from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset, DistributedSampler
+
+
+def get_distributed_loaders(train_ds, test_ds, batch_size, num_workers=4, generator=None):
+    """
+    Wraps datasets with DistributedSampler for multi-node training.
+    """
+    train_sampler = DistributedSampler(train_ds, shuffle=True)
+    test_sampler = DistributedSampler(test_ds, shuffle=False)
+
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, sampler=train_sampler,
+        num_workers=num_workers, pin_memory=True, generator=generator
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=batch_size, sampler=test_sampler,
+        num_workers=num_workers, pin_memory=True, generator=generator
+    )
+
+    return train_loader, test_loader, train_sampler, test_sampler
+
 
 class AdjointDatasetFromNetCDF:
     def __init__(self, 
@@ -13,6 +33,7 @@ class AdjointDatasetFromNetCDF:
                  idx_in_test,                # Temporal index of input variable in test set
                  idx_out_test,               # Temporal index of output variable in test set
                  label=None,                 # Optional variable name for labels
+                 pred_residual=False,        # Whether to predict residuals
                  device="cpu",               # Optional torch device
                  engine="netcdf4"            # Engine to use for reading NetCDF
                 ):
@@ -21,7 +42,7 @@ class AdjointDatasetFromNetCDF:
         # Load the NetCDF file
         ds = xr.open_dataset(data_path, engine=engine)
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
-        data = torch.tensor(data, dtype=torch.float32).to(device)
+        data = torch.tensor(data, dtype=torch.float32)
 
         N, T, C_out, H, W = data.shape
         x_train = data[:, idx_in_train, :C_in]                      # (N, T_train, C_in, H, W)
@@ -29,6 +50,10 @@ class AdjointDatasetFromNetCDF:
         x_test  = data[:, idx_in_test, :C_in]                       # (N, T_test, C_in, H, W)
         y_test  = data[:, idx_out_test]                             # (N, T_test, C_out, H, W)
 
+        if pred_residual:
+            print(f"pred_residual=True → C_in={C_in}, C_out={C_out}")
+            y_train[:, :, :C_in] = y_train[:, :, :C_in] - x_train                # Predict residuals
+            y_test[:, :, :C_in] = y_test[:, :, :C_in] - x_test
 
         # Flatten spatial targets and time: (N*T, C, H, W)
         self.x_train = x_train.reshape(-1, C_in, H, W)

@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import random
 from itertools import tee
+import torch.distributed as dist
 
 def pairwise(iterable):
     # pairwise('ABCDEFG') --> AB BC CD DE EF FG
@@ -163,19 +164,18 @@ class CostFunctionEmbedding(nn.Module):
         return embedding
 
 
-def save_checkpoint(model, optimizer, epoch, best_val_loss, path="checkpoint.pt"):
-    torch.save({
-        "epoch": epoch,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "best_val_loss": best_val_loss,
-        "torch_rng_state": torch.get_rng_state(),
-        "cuda_rng_state": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-        "numpy_rng_state": np.random.get_state(),
-        "python_rng_state": random.getstate(),
-    }, path)
-    print(f"Checkpoint saved at epoch {epoch} → {path}")
-
+def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="checkpoint.pt"):
+    if not dist.is_initialized() or dist.get_rank() == 0:  # Only rank 0 saves
+        state_dict = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": state_dict,
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+            "best_val_loss": best_val_loss,
+        }, path)
+        print(f"[Rank {dist.get_rank() if dist.is_initialized() else 0}] Checkpoint saved at epoch {epoch} → {path}")
+    
 
 
 def train_adjoint_model(
@@ -187,13 +187,13 @@ def train_adjoint_model(
         num_epochs=50, 
         scheduler=None, 
         log_every=1,
-        save_every=5,
+        checkpoint_every=1,
         val_loader=None,
         early_stopping=True,
         patience=5,
         start_epoch=1,
         best_val_loss=float("inf"),
-        save_path=None
+        checkpoint_path=None
         ):
     model.to(device)
     best_epoch = start_epoch - 1
@@ -203,10 +203,12 @@ def train_adjoint_model(
 
     if use_labels:
         for epoch in range(start_epoch, num_epochs + 1):
+            if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
+                dataloader.sampler.set_epoch(epoch)
+
             # === Training ===
             model.train()
             total_loss = 0.0
-
             for xb, yb, labelb in dataloader:
                 # print("check training")
                 xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
@@ -229,7 +231,10 @@ def train_adjoint_model(
                 loss.backward()
                 optimizer.step()
 
-                total_loss += loss.item()
+                # synchronize this batch’s loss across all ranks
+                loss_tensor = loss.detach()
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+                total_loss += loss_tensor.item() / dist.get_world_size()
             
             avg_train_loss = total_loss / len(dataloader)
 
@@ -256,12 +261,13 @@ def train_adjoint_model(
                     best_val_loss = avg_val_loss
                     best_epoch = epoch
                     no_improve_count = 0
-                    if save_path and epoch % save_every == 0:
-                        save_checkpoint(model, optimizer, epoch, best_val_loss, path=save_path)
+                    if checkpoint_path and epoch % checkpoint_every == 0:
+                        save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
                 else:
                     no_improve_count += 1
                     if early_stopping and no_improve_count >= patience:
-                        print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
+                        if not dist.is_initialized() or dist.get_rank() == 0:
+                            print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
                         break
 
 
@@ -272,14 +278,17 @@ def train_adjoint_model(
                 msg = f"[Epoch {epoch:03d}] Train Loss: {avg_train_loss:.6f}"
                 if avg_val_loss is not None:
                     msg += f" | Val Loss: {avg_val_loss:.6f}"
-                print(msg)
+                if not dist.is_initialized() or dist.get_rank() == 0:
+                    print(msg)
 
     else:
         for epoch in range(start_epoch, num_epochs + 1):
+            if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
+                dataloader.sampler.set_epoch(epoch)
+
             # === Training ===
             model.train()
             total_loss = 0.0
-
             for xb, yb in dataloader:
                 # print("check training")
                 xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
@@ -296,7 +305,10 @@ def train_adjoint_model(
                 loss.backward()
                 optimizer.step()
 
-                total_loss += loss.item()
+                # synchronize this batch’s loss across all ranks
+                loss_tensor = loss.detach()
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+                total_loss += loss_tensor.item() / dist.get_world_size()
             
             avg_train_loss = total_loss / len(dataloader)
 
@@ -319,12 +331,13 @@ def train_adjoint_model(
                     best_val_loss = avg_val_loss
                     best_epoch = epoch
                     no_improve_count = 0
-                    if save_path and epoch % save_every == 0:
-                        save_checkpoint(model, optimizer, epoch, best_val_loss, path=save_path)
+                    if checkpoint_path and epoch % checkpoint_every == 0:
+                        save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
                 else:
                     no_improve_count += 1
                     if early_stopping and no_improve_count >= patience:
-                        print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
+                        if not dist.is_initialized() or dist.get_rank() == 0:
+                            print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
                         break
 
 
@@ -335,9 +348,10 @@ def train_adjoint_model(
                 msg = f"[Epoch {epoch:03d}] Train Loss: {avg_train_loss:.6f}"
                 if avg_val_loss is not None:
                     msg += f" | Val Loss: {avg_val_loss:.6f}"
-                print(msg)
+                if not dist.is_initialized() or dist.get_rank() == 0:
+                    print(msg)
 
-        
+    
 
 class BaseAdjointNet(torch.nn.Module):
     def __init__(self, ch_width, last_kernel_size, pad):
@@ -418,10 +432,9 @@ class AdjointNet(BaseAdjointNet):
 
 
 class AdjointModel(torch.nn.Module):
-    def __init__(self, backbone, pred_residual=False):
+    def __init__(self, backbone):
         super().__init__()
         self.model = backbone
-        self.pred_residual = pred_residual
 
     def forward(self, x_true):
         """
@@ -431,6 +444,4 @@ class AdjointModel(torch.nn.Module):
             preds:       [B, C_out, H, W]
         """
         pred = self.model.forward_once(x_true)  # [B, C_out, H, W]
-        if self.pred_residual:
-            pred = pred + x_true[:, :pred.shape[1]]  # add residual to matching input channels
         return pred
