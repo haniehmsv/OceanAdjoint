@@ -31,5 +31,7 @@ echo "Running on master node: `hostname`"
 ${CONDA_PYTHON} -m torch.distributed.run \
     --nproc_per_node=2 \
     --nnodes=$NUM_NODES \
+    --rdzv-id=$JOB_ID \
+    --rdzv-backend=c10d \
     ssh_only_all_data_all_pair.py
 echo "Done."
