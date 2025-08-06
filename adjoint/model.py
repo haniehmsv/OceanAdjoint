@@ -175,7 +175,23 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="che
             "best_val_loss": best_val_loss,
         }, path)
         print(f"[Rank {dist.get_rank() if dist.is_initialized() else 0}] Checkpoint saved at epoch {epoch} → {path}")
-    
+
+class AreaWeightedLoss(torch.nn.Module):
+    def __init__(self, area_weighting):
+        super().__init__()
+        self.area_weighting = area_weighting
+
+    def forward(self, pred, target):
+        """
+        Computes the area-weighted MSE loss.
+        :param pred: [B, C_out, H, W]
+        :param target: [B, C_out, H, W]
+        :return: scalar loss value
+        """
+        assert pred.shape == target.shape, "Input and target must have the same shape"
+        weight = self.area_weighting.to(pred.device)
+
+        return torch.mean(weight * (pred - target) ** 2)
 
 
 def train_adjoint_model(
@@ -193,11 +209,20 @@ def train_adjoint_model(
         patience=5,
         start_epoch=1,
         best_val_loss=float("inf"),
-        checkpoint_path=None
+        checkpoint_path=None,
+        area_weighting=None
         ):
     model.to(device)
     best_epoch = start_epoch - 1
     no_improve_count = 0
+
+    if area_weighting is not None:
+        area_weighting = area_weighting.to(device, non_blocking=True)
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
+    else:
+        loss_fn = torch.nn.MSELoss()
 
     use_labels = True if label_embedder is not None else False
 
@@ -227,7 +252,7 @@ def train_adjoint_model(
 
                 optimizer.zero_grad()
                 pred = model(xb_scaled)
-                loss = torch.nn.functional.mse_loss(pred, yb_scaled)
+                loss = loss_fn(pred, yb_scaled)
                 loss.backward()
                 optimizer.step()
 
@@ -252,7 +277,7 @@ def train_adjoint_model(
                         embed = label_embedder(onehot, batch_size=xb.shape[0])  # (B, embed_dim, H, W)
                         xb = torch.cat([xb, embed], dim=1)  # (B, C_in+embed_dim, H, W)
                         pred = model(xb)
-                        loss = torch.nn.functional.mse_loss(pred, yb)
+                        loss = loss_fn(pred, yb)
                         val_loss += loss.item()
                 avg_val_loss = val_loss / len(val_loader)
 
@@ -301,7 +326,7 @@ def train_adjoint_model(
 
                 optimizer.zero_grad()
                 pred = model(xb_scaled)
-                loss = torch.nn.functional.mse_loss(pred, yb_scaled)
+                loss = loss_fn(pred, yb_scaled)
                 loss.backward()
                 optimizer.step()
 
@@ -322,7 +347,7 @@ def train_adjoint_model(
                         xb = xb.to(device, non_blocking=True)
                         yb = yb.to(device, non_blocking=True)
                         pred = model(xb)
-                        loss = torch.nn.functional.mse_loss(pred, yb)
+                        loss = loss_fn(pred, yb)
                         val_loss += loss.item()
                 avg_val_loss = val_loss / len(val_loader)
 
