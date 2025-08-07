@@ -16,7 +16,7 @@ def normalization_constants(input):
     return norms
 
 
-def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False):
+def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, cell_area=None):
     """
     Run backward adjoint rollout using trained model.
     
@@ -67,4 +67,8 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False):
         y_seq = y_seq.squeeze(0)  # return to [T, C_out, H, W]
         y_seq_true = y_seq_true.squeeze(0)  # return to [T-1, C_in, H, W]
 
+    if cell_area is not None:
+        cell_area = cell_area.to(device)
+        y_seq_true /= cell_area.view(1, 1, H, W)
+        y_seq /= cell_area.view(1, 1, H, W)
     return y_seq_true.cpu(), y_seq.cpu()
