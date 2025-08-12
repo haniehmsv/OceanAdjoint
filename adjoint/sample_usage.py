@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
 
 # add OceanAdjoint to path
-sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_parallel/OceanAdjoint/adjoint")
+sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/OceanAdjoint/adjoint")
 import model
 import data_loaders
 
@@ -36,15 +36,11 @@ labels = None
 C_in = 1
 C_out = 1
 pred_residual = True
-data_path = "/nobackupp17/ifenty/AD_ML/2025-07-28/etan_ad_20250728b_combined.nc"
+data_path = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/consolidated/etan_ad_2025-08-05b_3594_consolidated.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
-controls_path = "/nobackupp17/ifenty/AD_ML/2025-07-30b_adcontrols/consolidated"
-u_stress_path = os.path.join(controls_path, "ustress_ad_2025-07-31.nc")
-v_stress_path = os.path.join(controls_path, "vstress_ad_2025-07-31.nc")
-eta_ad_500_val_points_path = "/nobackupp17/ifenty/AD_ML/2025-07-30/500_etan_validation_points/etan_ad_500_validation_point.nc"
-idx_in_train = [3,4,5]
-idx_out_train = [6,7,8]
-idx_in_test = [6]
+idx_in_train = [3,4,5,6,7]
+idx_out_train = [4,5,6,7,8]
+idx_in_test = [8]
 idx_out_test = [9]
 n_epochs = 1000
 
@@ -59,6 +55,16 @@ wet_mask_loader = data_loaders.WetMaskFromNetCDF(
     engine="netcdf4"
 )
 wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
+
+# load cell area
+cell_area_loader = data_loaders.WetMaskFromNetCDF(
+    wet_path=wet_mask_path,
+    var_name='area',
+    device=device,
+    engine="netcdf4"
+)
+cell_area = cell_area_loader.get_wet_mask()  # Shape: (H, W)
+area_weighting = cell_area/cell_area.max()
 
 
 # load data
@@ -120,7 +126,7 @@ model_adj = DDP(model_adj, device_ids=[local_rank])
 scheduler = None
 
 # Train the model
-checkpoint_path = "checkpoints/checkpoint_all_data_all_pair.pt"
+checkpoint_path = "checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
@@ -148,6 +154,7 @@ model.train_adjoint_model(
     checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
-    device=device
+    device=device,
+    area_weighting=area_weighting
 )
 dist.destroy_process_group()
