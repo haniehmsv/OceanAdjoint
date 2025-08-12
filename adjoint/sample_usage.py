@@ -31,17 +31,15 @@ def init_distributed_mode():
     torch.cuda.set_device(local_rank)
     return torch.device("cuda", local_rank), local_rank
 
-
-labels = None
+# === Parameters ===
 C_in = 1
 C_out = 1
 pred_residual = True
 data_path = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/consolidated/etan_ad_2025-08-05b_3594_consolidated.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
-idx_in_train = [3,4,5,6,7]
-idx_out_train = [4,5,6,7,8]
-idx_in_test = [8]
-idx_out_test = [9]
+idx_in = [3,4,5,6,7,8,9]
+idx_out = [4,5,6,7,8,9]
+n_unroll = 4
 n_epochs = 1000
 
 # === Distributed init ===
@@ -68,15 +66,13 @@ area_weighting = cell_area/cell_area.max()
 
 
 # load data
-loader = data_loaders.AdjointDatasetFromNetCDF(
+loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
     data_path=data_path,
     var_name='etan_ad',
     C_in=C_in,
-    idx_in_train=idx_in_train,
-    idx_out_train=idx_out_train,
-    idx_in_test=idx_in_test,
-    idx_out_test=idx_out_test,
-    label=None,
+    idx_in=idx_in,
+    idx_out=idx_out,
+    n_unroll=n_unroll,
     pred_residual=pred_residual,
     device=device
 )
@@ -104,21 +100,17 @@ g.manual_seed(seed)
 
 
 # Get first batch of data to infer H, W
-sample_x, sample_y = train_ds[0]  # (C, H, W)
-_, H, W = sample_x.shape
+sample_x, sample_y = train_ds[0]  # (L, C, H, W)
+_, _, H, W = sample_x.shape
 
 # Create label embedding
-embed_dim = 8
-embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
+# embed_dim = 8
+# embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
 
 # Initialize model
 world_size = dist.get_world_size()
-if labels is not None:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out)).to(device)
-    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
-else:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
-    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
 model_adj = DDP(model_adj, device_ids=[local_rank])
 
