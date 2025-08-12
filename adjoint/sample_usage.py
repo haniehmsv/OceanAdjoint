@@ -155,6 +155,6 @@ model.train_adjoint_model(
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=device,
-    area_weighting=area_weighting
+    area_weighting=None
 )
 dist.destroy_process_group()
