@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
 
 # add OceanAdjoint to path
-sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/OceanAdjoint/adjoint")
+sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_rollout_loss/OceanAdjoint/adjoint")
 import model
 import data_loaders
 
@@ -35,7 +35,7 @@ def init_distributed_mode():
 C_in = 1
 C_out = 1
 pred_residual = True
-data_path = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/consolidated/etan_ad_2025-08-05b_3594_consolidated.nc"
+data_path = "/nobackupp17/ifenty/AD_ML/2025-07-28/etan_ad_20250728b_combined.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
 idx_in = [3,4,5,6,7,8,9]
 idx_out = [4,5,6,7,8,9]
