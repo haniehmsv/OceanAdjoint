@@ -165,7 +165,9 @@ class CostFunctionEmbedding(nn.Module):
 
 
 def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="checkpoint.pt"):
-    if not dist.is_initialized() or dist.get_rank() == 0:  # Only rank 0 saves
+    is_dist = dist.is_initialized()
+    rank = dist.get_rank() if is_dist else 0
+    if not is_dist or rank == 0:  # Only rank 0 saves
         state_dict = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
         torch.save({
             "epoch": epoch,
@@ -174,12 +176,71 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="che
             "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
             "best_val_loss": best_val_loss,
         }, path)
-        print(f"[Rank {dist.get_rank() if dist.is_initialized() else 0}] Checkpoint saved at epoch {epoch} → {path}")
+        print(f"[Rank {rank if is_dist else 0}] Checkpoint saved at epoch {epoch} → {path}")
 
 
 def normalization_constants(input):
     # input: [B, C, H, W]
     return input.abs().amax(dim=(1,2,3), keepdim=True)
+
+
+class RolloutLoss(torch.nn.Module):
+    def __init__(self, L, C_in, H, W, wet, pred_residual, loss_fn):
+        super().__init__()
+        self.L = int(L)
+        self.n_unroll = int(L) - 1
+        self.C_in = int(C_in)
+        self.H, self.W = int(H), int(W)
+        self.loss_fn = loss_fn
+        self.pred_residual = pred_residual
+
+        # Keep mask as a buffer so it moves with model.to(device)
+        if wet is not None:
+            mask = wet
+            if mask.ndim == 2:
+                mask = mask[None, None, :, :]   # -> [1,1,H,W]
+            self.register_buffer("mask", mask.detach().clone())
+        else:
+            self.mask = None
+
+    def forward(self, model, x_seq_true, y_seq_true):
+        """
+        x_seq_true: [B, L, C_in, H, W]   (L = n_unroll+1)
+        y_seq_true: [B, n_unroll, C_out, H, W]  (targets at each rollout step)
+        Returns: scalar loss and optionally the predicted sequence
+        """
+        # start from the first frame (time t)
+        current = x_seq_true[:, 0]                          # [B, C_in, H, W]
+        loss = 0.0
+
+        for s in range(self.n_unroll):
+            # normalize by current input’s max-abs
+            norms = normalization_constants(current)        # [B,1,1,1]
+            x_normed = current / norms
+
+            y_pred = model(x_normed)                        # [B, C_out, H, W]
+            if self.pred_residual:
+                y_pred[:, :self.C_in] = y_pred[:, :self.C_in] + x_normed
+
+            # de-normalize
+            y_pred = y_pred * norms
+
+            if self.mask is not None:
+                y_pred = y_pred * self.mask
+                y_true = y_seq_true[:, s] * self.mask
+            else:
+                y_true = y_seq_true[:, s]
+
+            # MSE of this step
+            step_loss = self.loss_fn(y_pred, y_true)
+            loss = loss + step_loss
+
+            # next input is model prediction’s first channel(s)
+            current = y_pred[:, :self.C_in] # or set current = y_pred[:, :self.C_in].detach() to avoid backprop through time
+
+        loss = loss / self.n_unroll
+        return loss
+
 
 
 class AreaWeightedLoss(torch.nn.Module):
@@ -215,11 +276,18 @@ def train_adjoint_model(
         start_epoch=1,
         best_val_loss=float("inf"),
         checkpoint_path=None,
-        area_weighting=None
+        area_weighting=None,
+        wet=None,
+        pred_residual=False
         ):
+    
     model.to(device)
     best_epoch = start_epoch - 1
     no_improve_count = 0
+
+    is_dist = dist.is_initialized()
+    rank = dist.get_rank() if is_dist else 0
+    world_size = dist.get_world_size() if is_dist else 1
 
     if area_weighting is not None:
         area_weighting = area_weighting.to(device, non_blocking=True)
@@ -228,6 +296,10 @@ def train_adjoint_model(
         loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
     else:
         loss_fn = torch.nn.MSELoss()
+
+    sample_x, _ = dataloader.dataset[0]          # sample_x: [L, C_in, H, W]
+    L, C_in, H, W = sample_x.shape
+    roll_loss = RolloutLoss(L, C_in, H, W, wet, pred_residual, loss_fn).to(device)
 
     for epoch in range(start_epoch, num_epochs + 1):
         if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
@@ -238,38 +310,38 @@ def train_adjoint_model(
         total_loss = 0.0
         for xb, yb in dataloader:
             # print("check training")
-            xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
-            yb = yb.to(device, non_blocking=True)  # shape: (B, C_out, H, W)
+            xb = xb.to(device, non_blocking=True)  # shape: (B, L, C_in, H, W)
+            yb = yb.to(device, non_blocking=True)  # shape: (B, L-1, C_out, H, W)
 
             # Scaling
-            alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
+            alpha = torch.rand(xb.shape[0], 1, 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
             xb_scaled = xb * alpha
             yb_scaled = yb * alpha
 
             optimizer.zero_grad()
-            pred = model(xb_scaled)
-            loss = loss_fn(pred, yb_scaled)
+            loss = roll_loss(model, xb_scaled, yb_scaled)
             loss.backward()
             optimizer.step()
 
             # synchronize this batch’s loss across all ranks
             loss_tensor = loss.detach()
-            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-            total_loss += loss_tensor.item() / dist.get_world_size()
+            if is_dist:
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+            total_loss += loss_tensor.item() / world_size
         
         avg_train_loss = total_loss / len(dataloader)
 
         # === Validation ===
         avg_val_loss = None
-        if val_loader is not None:
+        should_stop = False
+        if val_loader is not None and rank == 0:
             model.eval()
             val_loss = 0.0
             with torch.no_grad():
                 for xb, yb in val_loader:
                     xb = xb.to(device, non_blocking=True)
                     yb = yb.to(device, non_blocking=True)
-                    pred = model(xb)
-                    loss = loss_fn(pred, yb)
+                    loss = roll_loss(model, xb, yb)
                     val_loss += loss.item()
             avg_val_loss = val_loss / len(val_loader)
 
@@ -278,25 +350,34 @@ def train_adjoint_model(
                 best_val_loss = avg_val_loss
                 best_epoch = epoch
                 no_improve_count = 0
-                if checkpoint_path and epoch % checkpoint_every == 0:
+                if checkpoint_path and (epoch % checkpoint_every == 0):
                     save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
             else:
                 no_improve_count += 1
-                if early_stopping and no_improve_count >= patience:
-                    if not dist.is_initialized() or dist.get_rank() == 0:
-                        print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
-                    break
-
+            should_stop = early_stopping and (no_improve_count >= patience)
+        
+        # ===== BROADCAST decision to all ranks =====
+        if is_dist:
+            stop_tensor = torch.tensor([1 if should_stop else 0], device=device)
+            best_tensor = torch.tensor([best_val_loss], device=device)
+            dist.broadcast(stop_tensor, src=0)
+            dist.broadcast(best_tensor, src=0)
+            should_stop = bool(stop_tensor.item())
+            best_val_loss = float(best_tensor.item())
 
         if scheduler is not None:
             scheduler.step()
-    
-        if epoch % log_every == 0:
+
+        if rank == 0 and epoch % log_every == 0:
             msg = f"[Epoch {epoch:03d}] Train Loss: {avg_train_loss:.6f}"
             if avg_val_loss is not None:
                 msg += f" | Val Loss: {avg_val_loss:.6f}"
-            if not dist.is_initialized() or dist.get_rank() == 0:
-                print(msg)
+            print(msg)
+
+        if should_stop:
+            if rank == 0:
+                print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
+            break
 
     
 

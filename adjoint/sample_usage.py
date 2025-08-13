@@ -39,7 +39,7 @@ data_path = "/nobackupp17/ifenty/AD_ML/2025-07-28/etan_ad_20250728b_combined.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
 idx_in = [3,4,5,6,7,8,9]
 idx_out = [4,5,6,7,8,9]
-n_unroll = 4
+n_unroll = 3
 n_epochs = 1000
 
 # === Distributed init ===
@@ -92,7 +92,6 @@ if dist.get_rank() == 0:  # only run validation on rank 0
     )
 else:
     test_loader = None
-train_norm, test_norm = loader.get_norms()
 
 # DataLoader with reproducible shuffling
 g = torch.Generator()
@@ -100,15 +99,10 @@ g.manual_seed(seed)
 
 
 # Get first batch of data to infer H, W
-sample_x, sample_y = train_ds[0]  # (L, C, H, W)
-_, _, H, W = sample_x.shape
-
-# Create label embedding
-# embed_dim = 8
-# embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
+sample_x, sample_y = train_ds[0]  
+_, _, H, W = sample_x.shape     # (L, C, H, W)
 
 # Initialize model
-world_size = dist.get_world_size()
 model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
 optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
@@ -118,7 +112,7 @@ model_adj = DDP(model_adj, device_ids=[local_rank])
 scheduler = None
 
 # Train the model
-checkpoint_path = "checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt"
+checkpoint_path = f"checkpoints/checkpoint_sequence_of_{n_unroll}.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
@@ -142,11 +136,11 @@ model.train_adjoint_model(
     num_epochs=n_epochs,
     scheduler=scheduler,
     patience=20,
-    label_embedder=None,
     checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=device,
-    area_weighting=None
+    wet=wet,
+    pred_residual=pred_residual
 )
 dist.destroy_process_group()
