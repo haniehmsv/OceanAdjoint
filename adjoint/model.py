@@ -220,7 +220,10 @@ class RolloutLoss(torch.nn.Module):
 
             y_pred = model(x_normed)                        # [B, C_out, H, W]
             if self.pred_residual:
-                y_pred[:, :self.C_in] = y_pred[:, :self.C_in] + x_normed
+                # y_pred[:, :self.C_in] = y_pred[:, :self.C_in] + x_normed
+                head = y_pred[:, :self.C_in] + x_normed
+                tail = y_pred[:, self.C_in:]
+                y_pred = torch.cat((head, tail), dim=1)
 
             # de-normalize
             y_pred = y_pred * norms
