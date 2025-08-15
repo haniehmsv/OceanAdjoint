@@ -55,11 +55,15 @@ class AdjointRolloutDatasetFromNetCDF:
                  n_unroll,                        # rollout length during training
                  val_percent=0.2,              # percentage of data to use for validation
                  pred_residual=False,
-                engine="netcdf4"):
+                 remove_pole=False,          # Whether to remove pole points
+                 cell_area=None,
+                 engine="netcdf4"):
         self.data_path = data_path
         self.var_name = var_name
         self.C_in = C_in
         self.pred_residual = pred_residual
+        self.remove_pole = remove_pole
+        self.cell_area = cell_area.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, H, W) for broadcasting
 
         # Open once to get shapes, then close (workers will reopen lazily)
         with nc.Dataset(self.data_path, "r") as ds:
@@ -91,10 +95,13 @@ class AdjointRolloutDatasetFromNetCDF:
         self.train_index = [(n, k) for (n, k) in pairs if k < split_k]
         self.val_index   = [(n, k) for (n, k) in pairs if k >= split_k]
         self.view = "train"
+        # Lazily opened handles
+        self._ds = None
+        self._var = None
 
     def _open(self):
         # Lazily open per-process (safe with num_workers>0)
-        if not hasattr(self, "_ds"):
+        if self._ds is None:
             self._ds = nc.Dataset(self.data_path, "r")
             self._var = self._ds.variables[self.var_name]
 
@@ -122,6 +129,26 @@ class AdjointRolloutDatasetFromNetCDF:
         x = torch.from_numpy(x.astype(np.float32))
         y = torch.from_numpy(y.astype(np.float32))
 
+        # --- (1) Remove pole reference per-time, per-channel, for both x and y ---
+        if self.remove_pole:
+            # Reference at (lat=-1, lon=0)
+            # x_ref: (L, C_in)
+            x_ref_np = self._var[n, t_in,  :self.C_in, -1, 0].astype(np.float32)
+            x_ref = torch.from_numpy(x_ref_np).view(self.L, self.C_in, 1, 1)
+            x = x - x_ref
+
+            # y_ref: (L-1, C_out)
+            y_ref_np = self._var[n, t_out, :, -1, 0].astype(np.float32)
+            y_ref = torch.from_numpy(y_ref_np).view(self.n_unroll, self.C_out, 1, 1)
+            y = y - y_ref
+        
+        # --- (2) Scale by cell area if provided (broadcast over time & channels) ---
+        if self.cell_area is not None:
+            # self.cell_area is (1,1,H,W)
+            x = x * self.cell_area          # -> (L,   C_in,  H, W)
+            y = y * self.cell_area          # -> (L-1, C_out, H, W)
+
+        # --- (3) Residual target, after identical preprocessing of x and y ---
         if self.pred_residual:
             # y[..., :C_in] := y - x_prev  (work in CPU, no in-place on saved tensors)
             # x_prev is x at t_in[1:] aligned with y at t_out[:]
@@ -132,8 +159,11 @@ class AdjointRolloutDatasetFromNetCDF:
         return x, y
     
     def __del__(self):
-        if hasattr(self, "_ds"):
+        if getattr(self, "_ds", None) is not None:
             try:
                 self._ds.close()
             except Exception:
                 pass
+
+
+        
