@@ -34,6 +34,7 @@ class AdjointDatasetFromNetCDF:
                  idx_out_test,               # Temporal index of output variable in test set
                  label=None,                 # Optional variable name for labels
                  pred_residual=False,        # Whether to predict residuals
+                 remove_pole=False,          # Whether to remove pole points
                  device="cpu",               # Optional torch device
                  engine="netcdf4"            # Engine to use for reading NetCDF
                 ):
@@ -41,6 +42,9 @@ class AdjointDatasetFromNetCDF:
 
         # Load the NetCDF file
         ds = xr.open_dataset(data_path, engine=engine)
+        if remove_pole:
+            ref = ds[var_name].isel(lat=-1, lon=0)  # Reference point at the pole
+            ds[var_name] = ds[var_name] - ref
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
         data = torch.tensor(data, dtype=torch.float32)
 
