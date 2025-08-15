@@ -35,6 +35,7 @@ class AdjointDatasetFromNetCDF:
                  label=None,                 # Optional variable name for labels
                  pred_residual=False,        # Whether to predict residuals
                  remove_pole=False,          # Whether to remove pole points
+                 cell_area=None,
                  device="cpu",               # Optional torch device
                  engine="netcdf4"            # Engine to use for reading NetCDF
                 ):
@@ -47,6 +48,8 @@ class AdjointDatasetFromNetCDF:
             ds[var_name] = ds[var_name] - ref
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
         data = torch.tensor(data, dtype=torch.float32)
+        if cell_area is not None:
+            data = data * cell_area
 
         N, T, C_out, H, W = data.shape
         x_train = data[:, idx_in_train, :C_in]                      # (N, T_train, C_in, H, W)
