@@ -49,7 +49,6 @@ device, local_rank = init_distributed_mode()
 wet_mask_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='wet_mask',
-    device=device,
     engine="netcdf4"
 )
 wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
@@ -73,22 +72,34 @@ loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
     idx_in=idx_in,
     idx_out=idx_out,
     n_unroll=n_unroll,
-    pred_residual=pred_residual,
-    device=device
+    pred_residual=pred_residual
 )
 
-train_ds, test_ds = loader.get_datasets()
-train_loader, test_loader, train_sampler, test_sampler = data_loaders.get_distributed_loaders(
+train_ds = loader
+train_ds.set_view("train")
+
+test_ds = data_loaders.AdjointRolloutDatasetFromNetCDF(
+    data_path=data_path,
+    var_name='etan_ad',
+    C_in=C_in,
+    idx_in=idx_in,
+    idx_out=idx_out,
+    n_unroll=n_unroll,
+    pred_residual=pred_residual
+)
+test_ds.set_view("val")
+
+train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
     train_ds, test_ds, batch_size=16, num_workers=4
 )
 
 if dist.get_rank() == 0:  # only run validation on rank 0
     test_loader = torch.utils.data.DataLoader(
         test_ds,
-        batch_size=64,
+        batch_size=32,
         shuffle=False,
         num_workers=0,
-        pin_memory=True
+        pin_memory=False
     )
 else:
     test_loader = None
@@ -140,7 +151,6 @@ model.train_adjoint_model(
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=device,
-    wet=wet,
     pred_residual=pred_residual
 )
 dist.destroy_process_group()
