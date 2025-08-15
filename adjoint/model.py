@@ -208,21 +208,19 @@ class RolloutLoss(torch.nn.Module):
             # normalize by current input’s max-abs
             norms = normalization_constants(current)        # [B,1,1,1]
             x_normed = current / norms
+            y_true_normed = y_seq_true[:, s] / norms
 
             y_pred = model(x_normed)                        # [B, C_out, H, W]
-            # de-normalize
-            y_pred = y_pred * norms                         # back to raw, unnormalized values
-            y_true = y_seq_true[:, s]
-
+            
             # MSE of this step
-            step_loss = self.loss_fn(y_pred, y_true)
+            step_loss = self.loss_fn(y_pred, y_true_normed)
             loss = loss + step_loss
 
             # next input is model prediction’s first channel(s)
             if self.pred_residual:
-                current = current + y_pred[:, :self.C_in]
+                current = current + y_pred[:, :self.C_in] * norms
             else:
-                current = y_pred[:, :self.C_in] # or set current = y_pred[:, :self.C_in].detach() to avoid backprop through time
+                current = y_pred[:, :self.C_in] * norms
 
         return loss / self.n_unroll
 
