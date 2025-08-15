@@ -36,6 +36,7 @@ labels = None
 C_in = 1
 C_out = 1
 pred_residual = True
+remove_pole = True
 data_path = "/nobackupp17/ifenty/AD_ML/2025-07-28/etan_ad_20250728b_combined.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
 controls_path = "/nobackupp17/ifenty/AD_ML/2025-07-30b_adcontrols/consolidated"
@@ -72,6 +73,7 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_out_test=idx_out_test,
     label=None,
     pred_residual=pred_residual,
+    remove_pole=remove_pole,
     device=device
 )
 
