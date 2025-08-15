@@ -185,7 +185,7 @@ def normalization_constants(input):
 
 
 class RolloutLoss(torch.nn.Module):
-    def __init__(self, L, C_in, H, W, wet, pred_residual, loss_fn):
+    def __init__(self, L, C_in, H, W, pred_residual, loss_fn):
         super().__init__()
         self.L = int(L)
         self.n_unroll = int(L) - 1
@@ -193,15 +193,6 @@ class RolloutLoss(torch.nn.Module):
         self.H, self.W = int(H), int(W)
         self.loss_fn = loss_fn
         self.pred_residual = pred_residual
-
-        # Keep mask as a buffer so it moves with model.to(device)
-        if wet is not None:
-            mask = wet
-            if mask.ndim == 2:
-                mask = mask[None, None, :, :]   # -> [1,1,H,W]
-            self.register_buffer("mask", mask.detach().clone())
-        else:
-            self.mask = None
 
     def forward(self, model, x_seq_true, y_seq_true):
         """
@@ -219,30 +210,21 @@ class RolloutLoss(torch.nn.Module):
             x_normed = current / norms
 
             y_pred = model(x_normed)                        # [B, C_out, H, W]
-            if self.pred_residual:
-                # y_pred[:, :self.C_in] = y_pred[:, :self.C_in] + x_normed
-                head = y_pred[:, :self.C_in] + x_normed
-                tail = y_pred[:, self.C_in:]
-                y_pred = torch.cat((head, tail), dim=1)
-
             # de-normalize
-            y_pred = y_pred * norms
-
-            if self.mask is not None:
-                y_pred = y_pred * self.mask
-                y_true = y_seq_true[:, s] * self.mask
-            else:
-                y_true = y_seq_true[:, s]
+            y_pred = y_pred * norms                         # back to raw, unnormalized values
+            y_true = y_seq_true[:, s]
 
             # MSE of this step
             step_loss = self.loss_fn(y_pred, y_true)
             loss = loss + step_loss
 
             # next input is model prediction’s first channel(s)
-            current = y_pred[:, :self.C_in] # or set current = y_pred[:, :self.C_in].detach() to avoid backprop through time
+            if self.pred_residual:
+                current = current + y_pred[:, :self.C_in]
+            else:
+                current = y_pred[:, :self.C_in] # or set current = y_pred[:, :self.C_in].detach() to avoid backprop through time
 
-        loss = loss / self.n_unroll
-        return loss
+        return loss / self.n_unroll
 
 
 
@@ -280,7 +262,6 @@ def train_adjoint_model(
         best_val_loss=float("inf"),
         checkpoint_path=None,
         area_weighting=None,
-        wet=None,
         pred_residual=False
         ):
     
@@ -302,7 +283,7 @@ def train_adjoint_model(
 
     sample_x, _ = dataloader.dataset[0]          # sample_x: [L, C_in, H, W]
     L, C_in, H, W = sample_x.shape
-    roll_loss = RolloutLoss(L, C_in, H, W, wet, pred_residual, loss_fn).to(device)
+    roll_loss = RolloutLoss(L, C_in, H, W, pred_residual, loss_fn).to(device)
 
     for epoch in range(start_epoch, num_epochs + 1):
         if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
@@ -456,7 +437,7 @@ class AdjointNet(BaseAdjointNet):
                 pads = target - crop
                 pads = [pads[1] // 2, pads[1] - pads[1] // 2, pads[0] // 2, pads[0] - pads[0] // 2]
                 fts = nn.functional.pad(fts, pads)
-                fts += temp[2 * self.num_steps - count - 1]
+                fts = fts + temp[2 * self.num_steps - count - 1]
                 count += 1
         return torch.mul(fts, self.wet)  # shape: [B, C_out, H, W]
 
