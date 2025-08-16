@@ -40,7 +40,7 @@ data_path = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/co
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
 idx_in = [3,4,5,6,7,8,9]
 idx_out = [4,5,6,7,8,9]
-n_unroll = 3
+n_unroll = 1
 n_epochs = 1000
 
 # === Distributed init ===
@@ -58,7 +58,7 @@ wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
 cell_area_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='area',
-    device=device,
+    device='cpu',
     engine="netcdf4"
 )
 cell_area = cell_area_loader.get_wet_mask()  # Shape: (H, W)
