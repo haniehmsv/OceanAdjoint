@@ -46,7 +46,7 @@ class AdjointDatasetFromNetCDF:
             ref = ds[var_name].isel(lat=-1, lon=0)  # Reference point at the pole
             ds[var_name] = ds[var_name] - ref
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
-        data = torch.tensor(data, dtype=torch.float32)
+        data = torch.tensor(data, dtype=torch.float32, device=device)
 
         N, T, C_out, H, W = data.shape
         x_train = data[:, idx_in_train, :C_in]                      # (N, T_train, C_in, H, W)
