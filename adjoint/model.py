@@ -216,9 +216,6 @@ def train_adjoint_model(
     no_improve_count = 0
 
     if area_weighting is not None:
-        area_weighting = area_weighting.to(device, non_blocking=True)
-        if area_weighting.ndim == 2:
-            area_weighting = area_weighting[None, None, :, :]
         loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
     else:
         loss_fn = torch.nn.MSELoss()
