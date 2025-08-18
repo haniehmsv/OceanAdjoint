@@ -32,7 +32,6 @@ def init_distributed_mode():
     return torch.device("cuda", local_rank), local_rank
 
 
-labels = None
 C_in = 1
 C_out = 1
 pred_residual = True
@@ -52,7 +51,6 @@ device, local_rank = init_distributed_mode()
 wet_mask_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='wet_mask',
-    device=device,
     engine="netcdf4"
 )
 wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
@@ -61,12 +59,14 @@ wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
 cell_area_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='area',
-    device=device,
     engine="netcdf4"
 )
 cell_area = cell_area_loader.get_wet_mask()  # Shape: (H, W)
 area_weighting = (cell_area/cell_area.max()).to(device)
 
+# DataLoader with reproducible shuffling
+g = torch.Generator()
+g.manual_seed(seed)
 
 # load data
 loader = data_loaders.AdjointDatasetFromNetCDF(
@@ -77,15 +77,13 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_out_train=idx_out_train,
     idx_in_test=idx_in_test,
     idx_out_test=idx_out_test,
-    label=None,
     pred_residual=pred_residual,
-    remove_pole=remove_pole,
-    device=device
+    remove_pole=remove_pole
 )
 
 train_ds, test_ds = loader.get_datasets()
-train_loader, test_loader, train_sampler, test_sampler = data_loaders.get_distributed_loaders(
-    train_ds, test_ds, batch_size=16, num_workers=4
+train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
+    train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
 )
 
 if dist.get_rank() == 0:  # only run validation on rank 0
@@ -100,29 +98,20 @@ else:
     test_loader = None
 train_norm, test_norm = loader.get_norms()
 
-# DataLoader with reproducible shuffling
-g = torch.Generator()
-g.manual_seed(seed)
-
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
 _, H, W = sample_x.shape
 
-# Create label embedding
-embed_dim = 8
-embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
+# # Create label embedding
+# embed_dim = 8
+# embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
 
 # Initialize model
-world_size = dist.get_world_size()
-if labels is not None:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out)).to(device)
-    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
-else:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
-    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
 
-model_adj = DDP(model_adj, device_ids=[local_rank])
+model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
 scheduler = None
