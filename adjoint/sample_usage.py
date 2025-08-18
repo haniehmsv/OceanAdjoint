@@ -141,7 +141,6 @@ model.train_adjoint_model(
     num_epochs=n_epochs,
     scheduler=scheduler,
     patience=20,
-    label_embedder=None,
     checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
