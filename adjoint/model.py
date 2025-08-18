@@ -179,7 +179,9 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="che
 class AreaWeightedLoss(torch.nn.Module):
     def __init__(self, area_weighting):
         super().__init__()
-        self.area_weighting = area_weighting
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        self.register_buffer("weight", area_weighting.contiguous())
 
     def forward(self, pred, target):
         """
@@ -188,10 +190,7 @@ class AreaWeightedLoss(torch.nn.Module):
         :param target: [B, C_out, H, W]
         :return: scalar loss value
         """
-        assert pred.shape == target.shape, "Input and target must have the same shape"
-        weight = self.area_weighting.to(pred.device)
-
-        return torch.mean(weight * (pred - target) ** 2)
+        return torch.mean(self.weight * (pred - target) ** 2)
 
 
 def train_adjoint_model(

@@ -65,7 +65,7 @@ cell_area_loader = data_loaders.WetMaskFromNetCDF(
     engine="netcdf4"
 )
 cell_area = cell_area_loader.get_wet_mask()  # Shape: (H, W)
-area_weighting = cell_area/cell_area.max()
+area_weighting = (cell_area/cell_area.max()).to(device)
 
 
 # load data
