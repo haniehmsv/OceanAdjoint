@@ -9,7 +9,6 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
-
 # add OceanAdjoint to path
 sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_rollout_loss/OceanAdjoint/adjoint")
 import model
@@ -38,10 +37,11 @@ pred_residual = True
 remove_pole = True
 data_path = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/consolidated/etan_ad_2025-08-05b_3594_consolidated.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
-idx_in = [3,4,5,6,7,8,9]
+idx_in = [3,4,5,6,7,8]
 idx_out = [4,5,6,7,8,9]
-n_unroll = 1
+n_unroll = 3
 n_epochs = 1000
+val_percent = 0.1
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -58,12 +58,14 @@ wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
 cell_area_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='area',
-    device='cpu',
     engine="netcdf4"
 )
 cell_area = cell_area_loader.get_wet_mask()  # Shape: (H, W)
-area_weighting = cell_area/cell_area.max()
+area_weighting = (cell_area/cell_area.max()).to(device)
 
+# DataLoader with reproducible shuffling
+g = torch.Generator()
+g.manual_seed(seed)
 
 # load data
 loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
@@ -75,48 +77,29 @@ loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
     n_unroll=n_unroll,
     pred_residual=pred_residual,
     remove_pole=remove_pole,
-    cell_area=cell_area
+    val_percent=val_percent
 )
 
-train_ds = loader
-train_ds.set_view("train")
-
-test_ds = data_loaders.AdjointRolloutDatasetFromNetCDF(
-    data_path=data_path,
-    var_name='etan_ad',
-    C_in=C_in,
-    idx_in=idx_in,
-    idx_out=idx_out,
-    n_unroll=n_unroll,
-    pred_residual=pred_residual,
-    remove_pole=remove_pole,
-    cell_area=cell_area
-)
-test_ds.set_view("val")
-
+train_ds, test_ds = loader.get_datasets()
 train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
-    train_ds, test_ds, batch_size=16, num_workers=4
+    train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
 )
 
 if dist.get_rank() == 0:  # only run validation on rank 0
     test_loader = torch.utils.data.DataLoader(
         test_ds,
-        batch_size=32,
+        batch_size=64,
         shuffle=False,
         num_workers=0,
-        pin_memory=False
+        pin_memory=True
     )
 else:
     test_loader = None
 
-# DataLoader with reproducible shuffling
-g = torch.Generator()
-g.manual_seed(seed)
-
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  
-_, _, H, W = sample_x.shape     # (L, C, H, W)
+_, _, H, W = sample_x.shape     # (n_unroll, C, H, W)
 
 # Initialize model
 model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
@@ -156,6 +139,7 @@ model.train_adjoint_model(
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=device,
-    pred_residual=pred_residual
+    pred_residual=pred_residual,
+    area_weighting=area_weighting
 )
 dist.destroy_process_group()

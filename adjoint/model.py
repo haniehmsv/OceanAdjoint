@@ -185,10 +185,9 @@ def normalization_constants(input):
 
 
 class RolloutLoss(torch.nn.Module):
-    def __init__(self, L, C_in, H, W, pred_residual, loss_fn):
+    def __init__(self, n_unroll, C_in, H, W, pred_residual, loss_fn):
         super().__init__()
-        self.L = int(L)
-        self.n_unroll = int(L) - 1
+        self.n_unroll = int(n_unroll)
         self.C_in = int(C_in)
         self.H, self.W = int(H), int(W)
         self.loss_fn = loss_fn
@@ -196,7 +195,7 @@ class RolloutLoss(torch.nn.Module):
 
     def forward(self, model, x_seq_true, y_seq_true):
         """
-        x_seq_true: [B, L, C_in, H, W]   (L = n_unroll+1)
+        x_seq_true: [B, n_unroll, C_in, H, W]
         y_seq_true: [B, n_unroll, C_out, H, W]  (targets at each rollout step)
         Returns: scalar loss and optionally the predicted sequence
         """
@@ -229,7 +228,9 @@ class RolloutLoss(torch.nn.Module):
 class AreaWeightedLoss(torch.nn.Module):
     def __init__(self, area_weighting):
         super().__init__()
-        self.area_weighting = area_weighting
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        self.register_buffer("weight", area_weighting.contiguous())
 
     def forward(self, pred, target):
         """
@@ -238,10 +239,7 @@ class AreaWeightedLoss(torch.nn.Module):
         :param target: [B, C_out, H, W]
         :return: scalar loss value
         """
-        assert pred.shape == target.shape, "Input and target must have the same shape"
-        weight = self.area_weighting.to(pred.device)
-
-        return torch.mean(weight * (pred - target) ** 2)
+        return torch.mean(self.weight * (pred - target) ** 2)
 
 
 def train_adjoint_model(
@@ -272,16 +270,13 @@ def train_adjoint_model(
     world_size = dist.get_world_size() if is_dist else 1
 
     if area_weighting is not None:
-        area_weighting = area_weighting.to(device, non_blocking=True)
-        if area_weighting.ndim == 2:
-            area_weighting = area_weighting[None, None, :, :]
         loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
     else:
         loss_fn = torch.nn.MSELoss()
 
-    sample_x, _ = dataloader.dataset[0]          # sample_x: [L, C_in, H, W]
-    L, C_in, H, W = sample_x.shape
-    roll_loss = RolloutLoss(L, C_in, H, W, pred_residual, loss_fn).to(device)
+    sample_x, _ = dataloader.dataset[0]          # sample_x: [n_unroll, C_in, H, W]
+    n_unroll, C_in, H, W = sample_x.shape
+    roll_loss = RolloutLoss(n_unroll, C_in, H, W, pred_residual, loss_fn).to(device)
 
     for epoch in range(start_epoch, num_epochs + 1):
         if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
@@ -292,8 +287,8 @@ def train_adjoint_model(
         total_loss = 0.0
         for xb, yb in dataloader:
             # print("check training")
-            xb = xb.to(device, non_blocking=True)  # shape: (B, L, C_in, H, W)
-            yb = yb.to(device, non_blocking=True)  # shape: (B, L-1, C_out, H, W)
+            xb = xb.to(device, non_blocking=True)  # shape: (B, n_unroll, C_in, H, W)
+            yb = yb.to(device, non_blocking=True)  # shape: (B, n_unroll, C_out, H, W)
 
             # Scaling
             alpha = torch.rand(xb.shape[0], 1, 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
