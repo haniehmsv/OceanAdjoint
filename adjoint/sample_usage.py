@@ -102,9 +102,16 @@ sample_x, sample_y = train_ds[0]
 _, _, H, W = sample_x.shape     # (n_unroll, C, H, W)
 
 # Initialize model
+ckpt = torch.load("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt", map_location="cpu")
+state = ckpt["model_state_dict"]
 model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
-optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+missing, unexpected = model_adj.load_state_dict(state, strict=False)
+if dist.get_rank() == 0:
+    print("Transfer load: missing keys:", missing)
+    print("Transfer load: unexpected keys:", unexpected)
 
+optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj).to(device)
 model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
