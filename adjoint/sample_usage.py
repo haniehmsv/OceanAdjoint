@@ -84,7 +84,23 @@ train_ds, test_ds = loader.get_datasets()
 train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
     train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
 )
+
+# save data stats
 data_mean, data_std = loader.get_mean_std()
+if (not dist.is_initialized()) or dist.get_rank() == 0:
+    norm_path = f"data_norm_sequence_of_{n_unroll}.npz"
+    if not os.path.exists(norm_path):
+        np.savez(
+            norm_path,
+            mean=(data_mean.detach().cpu().numpy()
+                  if isinstance(data_mean, torch.Tensor) else np.asarray(data_mean)),
+            std=(data_std.detach().cpu().numpy()
+                 if isinstance(data_std, torch.Tensor) else np.asarray(data_std)),
+        )
+        print(f"[Rank 0] Saved normalization stats → {norm_path}")
+    else:
+        print(f"[Rank 0] Normalization stats already exist → {norm_path}")
+
 
 if dist.get_rank() == 0:  # only run validation on rank 0
     test_loader = torch.utils.data.DataLoader(
