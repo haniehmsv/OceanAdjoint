@@ -111,7 +111,6 @@ if dist.get_rank() == 0:
     print("Transfer load: unexpected keys:", unexpected)
 
 optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
-model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj).to(device)
 model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
