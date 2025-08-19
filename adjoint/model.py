@@ -179,11 +179,6 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="che
         print(f"[Rank {rank if is_dist else 0}] Checkpoint saved at epoch {epoch} → {path}")
 
 
-def normalization_constants(input):
-    # input: [B, C, H, W]
-    return input.abs().amax(dim=(1,2,3), keepdim=True)
-
-
 class RolloutLoss(torch.nn.Module):
     def __init__(self, n_unroll, C_in, H, W, pred_residual, loss_fn):
         super().__init__()
@@ -199,32 +194,23 @@ class RolloutLoss(torch.nn.Module):
         y_seq_true: [B, n_unroll, C_out, H, W]  (targets at each rollout step)
         Returns: scalar loss and optionally the predicted sequence
         """
-
-        # Scaling
-        alpha = torch.rand(x_seq_true.shape[0], 1, 1, 1, 1, device=x_seq_true.device) * 2  # scale ∈ [0,2)
-        x_seq_true_scaled = x_seq_true * alpha
-        y_seq_true_scaled = y_seq_true * alpha
         # start from the first frame (time t)
-        current = x_seq_true_scaled[:, 0]                          # [B, C_in, H, W]
+        current = x_seq_true[:, 0]                          # [B, C_in, H, W]
         loss = 0.0
 
         for s in range(self.n_unroll):
-            # normalize by current input’s max-abs
-            norms = normalization_constants(current)        # [B,1,1,1]
-            x_normed = current / norms
-            y_true_normed = y_seq_true_scaled[:, s] / norms
+            y_true = y_seq_true[:, s]
+            y_pred = model(current)                       # [B, C_out, H, W]
 
-            y_pred = model(x_normed)                        # [B, C_out, H, W]
-            
             # MSE of this step
-            step_loss = self.loss_fn(y_pred, y_true_normed)
+            step_loss = self.loss_fn(y_pred, y_true)
             loss = loss + step_loss
 
             # next input is model prediction’s first channel(s)
             if self.pred_residual:
-                current = current + y_pred[:, :self.C_in] * norms
+                current = current + y_pred[:, :self.C_in]
             else:
-                current = y_pred[:, :self.C_in] * norms
+                current = y_pred[:, :self.C_in]
 
         return loss / self.n_unroll
 
@@ -295,8 +281,13 @@ def train_adjoint_model(
             xb = xb.to(device, non_blocking=True)  # shape: (B, n_unroll, C_in, H, W)
             yb = yb.to(device, non_blocking=True)  # shape: (B, n_unroll, C_out, H, W)
 
+            # Scaling
+            alpha = torch.rand(xb.shape[0], 1, 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
+            xb_scaled = xb * alpha
+            yb_scaled = yb * alpha
+
             optimizer.zero_grad()
-            loss = roll_loss(model, xb, yb)
+            loss = roll_loss(model, xb_scaled, yb_scaled)
             loss.backward()
             optimizer.step()
 

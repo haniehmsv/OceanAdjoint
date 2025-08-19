@@ -94,6 +94,10 @@ class AdjointRolloutDatasetFromNetCDF:
                 f"val_percent={val_percent} is too high for num_windows={num_windows} "
                 f"(train windows would be {split_k} ≤ 0). Reduce val_percent or increase data length."
             )
+        
+        self.data_mean = data[:,idx_in[0]:idx_in[0]+split_k].mean(dim=(0,1)) # [C, H, W]
+        self.data_std = data[:,idx_in[0]:idx_in[0]+split_k].std(dim=(0,1)) # [C, H, W]
+        data = (data - self.data_mean) / self.data_std  # Normalize the data
 
         x_window = []
         y_window = []
@@ -130,6 +134,12 @@ class AdjointRolloutDatasetFromNetCDF:
         x_va, y_va = self.val
         val_ds = TensorDataset(x_va, y_va)
         return train_ds, val_ds
+    
+    def get_mean_std(self):
+        """
+        Returns the mean and std of training dataused for normalization.
+        """
+        return self.data_mean, self.data_std
     
 
 class AdjointControlDatasetFromNetCDF:

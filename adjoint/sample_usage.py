@@ -84,6 +84,7 @@ train_ds, test_ds = loader.get_datasets()
 train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
     train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
 )
+data_mean, data_std = loader.get_mean_std()
 
 if dist.get_rank() == 0:  # only run validation on rank 0
     test_loader = torch.utils.data.DataLoader(
@@ -111,7 +112,8 @@ if dist.get_rank() == 0:
     print("Transfer load: unexpected keys:", unexpected)
 
 optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
-model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=True)
+model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj)
+model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
 scheduler = None
