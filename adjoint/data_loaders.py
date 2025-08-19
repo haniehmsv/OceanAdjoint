@@ -83,7 +83,7 @@ class AdjointRolloutDatasetFromNetCDF:
         idx_out = np.array(idx_out, dtype=int)
 
         # Build (n_case, t_start) pairs for all windows, then split chronologically
-        num_windows = len(idx_in) - n_unroll
+        num_windows = len(idx_in) - n_unroll + 1
 
         # chronological split by k
         import math
