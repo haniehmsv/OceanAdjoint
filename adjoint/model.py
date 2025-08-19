@@ -199,15 +199,20 @@ class RolloutLoss(torch.nn.Module):
         y_seq_true: [B, n_unroll, C_out, H, W]  (targets at each rollout step)
         Returns: scalar loss and optionally the predicted sequence
         """
+
+        # Scaling
+        alpha = torch.rand(x_seq_true.shape[0], 1, 1, 1, 1, device=x_seq_true.device) * 2  # scale ∈ [0,2)
+        x_seq_true_scaled = x_seq_true * alpha
+        y_seq_true_scaled = y_seq_true * alpha
         # start from the first frame (time t)
-        current = x_seq_true[:, 0]                          # [B, C_in, H, W]
+        current = x_seq_true_scaled[:, 0]                          # [B, C_in, H, W]
         loss = 0.0
 
         for s in range(self.n_unroll):
             # normalize by current input’s max-abs
             norms = normalization_constants(current)        # [B,1,1,1]
             x_normed = current / norms
-            y_true_normed = y_seq_true[:, s] / norms
+            y_true_normed = y_seq_true_scaled[:, s] / norms
 
             y_pred = model(x_normed)                        # [B, C_out, H, W]
             
@@ -290,13 +295,8 @@ def train_adjoint_model(
             xb = xb.to(device, non_blocking=True)  # shape: (B, n_unroll, C_in, H, W)
             yb = yb.to(device, non_blocking=True)  # shape: (B, n_unroll, C_out, H, W)
 
-            # Scaling
-            alpha = torch.rand(xb.shape[0], 1, 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
-            xb_scaled = xb * alpha
-            yb_scaled = yb * alpha
-
             optimizer.zero_grad()
-            loss = roll_loss(model, xb_scaled, yb_scaled)
+            loss = roll_loss(model, xb, yb)
             loss.backward()
             optimizer.step()
 
