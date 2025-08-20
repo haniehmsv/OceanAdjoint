@@ -75,6 +75,7 @@ loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
     idx_in=idx_in,
     idx_out=idx_out,
     n_unroll=n_unroll,
+    wet=wet,
     pred_residual=pred_residual,
     remove_pole=remove_pole,
     val_percent=val_percent

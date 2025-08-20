@@ -102,6 +102,8 @@ class AdjointRolloutDatasetFromNetCDF:
         wet_bool = (wet > 0)
         data_mean[:, ~wet_bool] = 0
         data_std[:,  ~wet_bool] = 1
+        zero_std = data_std.abs() == 0.0
+        data_std = data_std.masked_fill(zero_std, 1.0)
         self.data_mean = data_mean
         self.data_std = data_std
         data = (data - self.data_mean) / self.data_std  # Normalize the data
@@ -148,76 +150,3 @@ class AdjointRolloutDatasetFromNetCDF:
         """
         return self.data_mean, self.data_std
     
-    
-
-class AdjointControlDatasetFromNetCDF:
-    """
-    Returns adjoint controls at t-1 given adjoint states at t
-      x[b] has shape [C_in, H, W] at time  [t]
-      y[b] has shape [C_out, H, W] at time [t-1]
-    """
-    def __init__(self, 
-                 state_path, var_name_in, C_in,
-                 control_path, var_name_out, C_out,
-                 idx_in, idx_out,                 # lists (must be consecutive pairs, e.g., [3,4,5,6,7,8] and [4,5,6,7,8,9])
-                 val_percent=0.2,              # percentage of data to use for validation
-                 remove_pole=False,          # Whether to remove pole points
-                 cell_area=None,
-                 engine="netcdf4",
-                 device="cpu"
-                ):             
-        self.device = device 
-
-        # Load the NetCDF file for adjoint states
-        ds_state = xr.open_dataset(state_path, engine=engine)
-        if remove_pole:
-            ref = ds_state[var_name_in].isel(lat=-1, lon=0)  # Reference point at the pole
-            ds_state[var_name_in] = ds_state[var_name_in] - ref
-        data_state = ds_state[var_name_in].values            # Shape: (N_targets, T, C_in, H, W)
-        data_state = torch.tensor(data_state, dtype=torch.float32, device=device)
-        ds_state.close()
-
-        # Load the NetCDF file for adjoint controls
-        ds_control = xr.open_dataset(control_path, engine=engine)
-        data_control = ds_control[var_name_out].values            # Shape: (N_targets, T, C_out, H, W)
-        data_control = torch.tensor(data_control, dtype=torch.float32, device=device)
-        ds_control.close()
-
-        if cell_area is not None:
-            data_state = data_state * cell_area.to(device)
-            data_control = data_control * cell_area.to(device)
-
-        N, T, _, H, W = data_control.shape
-
-        assert (len(idx_in) == len(idx_out)), "Expect idx_in and idx_out to have the same length."
-
-        idx_in = np.array(idx_in, dtype=int)
-        idx_out = np.array(idx_out, dtype=int)
-
-        x = data_state[:, idx_in, :, :, :]  # (N, T, C_in, H, W)
-        y = data_control[:, idx_out, :, :, :]  # (N, T, C_out, H, W)
-        import math
-        val_count = max(1, math.ceil(val_percent * x.shape[1]))
-        split_k = x.shape[1] - val_count
-        x_train = x[:, :split_k, :, :, :]
-        y_train = y[:, :split_k, :, :, :]
-        x_val = x[:, split_k:, :, :, :]
-        y_val = y[:, split_k:, :, :, :]
-
-        x_train = x_train.view(-1, C_in, H, W)  # (N * T_train, C_in, H, W)
-        y_train = y_train.view(-1, C_out, H, W) # (N * T_train, C_out, H, W)
-        x_val   = x_val.view(-1, C_in, H, W)    # (N * T_test, C_in, H, W)
-        y_val   = y_val.view(-1, C_out, H, W)   # (N * T_test, C_out, H, W)
-
-        self.train = (x_train, y_train)
-        self.val   = (x_val, y_val)
-
-    def get_datasets(self):
-        """
-        Returns: (train_ds, val_ds)
-        """
-        x_tr, y_tr = self.train
-        train_ds = TensorDataset(x_tr, y_tr)
-        x_va, y_va = self.val
-        val_ds = TensorDataset(x_va, y_va)
-        return train_ds, val_ds
