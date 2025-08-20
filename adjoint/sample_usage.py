@@ -88,7 +88,7 @@ train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
 # save data stats
 data_mean, data_std = loader.get_mean_std()
 if (not dist.is_initialized()) or dist.get_rank() == 0:
-    norm_path = f"data_norm_sequence_of_{n_unroll}.npz"
+    norm_path = f"data_stats_sequence_of_{n_unroll}.npz"
     if not os.path.exists(norm_path):
         np.savez(
             norm_path,
