@@ -11,7 +11,7 @@ def normalization_constants(input):
     Returns:
         x_norms: [B,] # Normalization constants
     """
-    norms = input.abs().amax(dim=(1, 2, 3))  # Maximum absolute value over channel, height, width, shape: [B,]
+    norms = input.abs().amax(dim=(1, 2, 3), keepdim=True)  # Maximum absolute value over channel, height, width, shape: [B,]
 
     return norms
 
@@ -30,6 +30,7 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, c
         y_seq_pred: [B, T-1, C_out, H, W] — predictions (unnormalized)
     """
     device = next(model.parameters()).device
+    wet = wet.to(device)
     model.eval()
 
     # Add batch dim if missing
@@ -44,7 +45,7 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, c
     B, T, C_in, H, W = x_seq_true.shape
     preds = []
     input = x_seq_true[:, 0].clone()  # λ(T) shape: [B, C_in, H, W]
-    norms = normalization_constants(input).view(-1, 1, 1, 1)
+    norms = normalization_constants(input)
     input /= norms  # Normalize input by its norm
 
     with torch.no_grad():
@@ -54,11 +55,11 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, c
                 y_t[:, :C_in] = y_t[:, :C_in] + input
             y_t *= norms
             if wet is not None:
-                y_t *= wet.to(device)
+                y_t *= wet
 
             preds.append(y_t)
             input = y_t[:,:C_in].clone()
-            norms = normalization_constants(input).view(-1, 1, 1, 1)
+            norms = normalization_constants(input)
             input /= norms
 
     y_seq = torch.stack(preds, dim=1)  # shape: [B, T-1, C_out, H, W]
