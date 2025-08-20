@@ -55,6 +55,7 @@ class AdjointRolloutDatasetFromNetCDF:
                  idx_in, idx_out,                 # lists (must be consecutive pairs, e.g., [3,4,5,6,7,8] and [4,5,6,7,8,9])
                  n_unroll,                        # rollout length during training
                  val_percent=0.2,              # percentage of data to use for validation
+                 wet = None,
                  pred_residual=False,
                  remove_pole=False,          # Whether to remove pole points
                  cell_area=None,
@@ -62,6 +63,7 @@ class AdjointRolloutDatasetFromNetCDF:
                  device="cpu"
                 ):             
         self.device = device 
+        wet = wet.to(device)
 
         # Load the NetCDF file
         ds = xr.open_dataset(data_path, engine=engine)
@@ -94,9 +96,14 @@ class AdjointRolloutDatasetFromNetCDF:
                 f"val_percent={val_percent} is too high for num_windows={num_windows} "
                 f"(train windows would be {split_k} ≤ 0). Reduce val_percent or increase data length."
             )
-        
-        self.data_mean = data[:,idx_in[0]:idx_in[0]+split_k].mean(dim=(0,1)) # [C, H, W]
-        self.data_std = data[:,idx_in[0]:idx_in[0]+split_k].std(dim=(0,1)) # [C, H, W]
+
+        data_mean = data[:,idx_in[0]:idx_in[0]+split_k].mean(dim=(0,1)) # [C, H, W]
+        data_std = data[:,idx_in[0]:idx_in[0]+split_k].std(dim=(0,1)) # [C, H, W]
+        wet_bool = (wet > 0)
+        data_mean[:, ~wet_bool] = 0
+        data_std[:,  ~wet_bool] = 1
+        self.data_mean = data_mean
+        self.data_std = data_std
         data = (data - self.data_mean) / self.data_std  # Normalize the data
 
         x_window = []
@@ -140,6 +147,7 @@ class AdjointRolloutDatasetFromNetCDF:
         Returns the mean and std of training dataused for normalization.
         """
         return self.data_mean, self.data_std
+    
     
 
 class AdjointControlDatasetFromNetCDF:
