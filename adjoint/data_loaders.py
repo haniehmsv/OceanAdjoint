@@ -67,11 +67,12 @@ class AdjointRolloutDatasetFromNetCDF:
 
         # Load the NetCDF file
         ds = xr.open_dataset(data_path, engine=engine)
-        if remove_pole:
-            ref = ds[var_name].isel(lat=-1, lon=0)  # Reference point at the pole
-            ds[var_name] = ds[var_name] - ref
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
         data = torch.tensor(data, dtype=torch.float32, device=device)
+        if remove_pole:
+            wet_mask = (wet > 0).to(data.dtype)  
+            ref = data[:, :, :, -1, 0]  # Reference point at the pole
+            data = data - ref[..., None, None] * wet_mask[None, None, None, :, :]
         ds.close()
         if cell_area is not None:
             data = data * cell_area.to(device)
