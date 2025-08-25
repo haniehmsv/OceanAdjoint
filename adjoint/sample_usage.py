@@ -42,6 +42,7 @@ idx_out = [4,5,6,7,8,9]
 n_unroll = 3
 n_epochs = 1000
 val_percent = 0.1
+transfer_learning = False
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -75,6 +76,7 @@ loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
     idx_in=idx_in,
     idx_out=idx_out,
     n_unroll=n_unroll,
+    wet=wet,
     pred_residual=pred_residual,
     remove_pole=remove_pole,
     val_percent=val_percent
@@ -84,6 +86,23 @@ train_ds, test_ds = loader.get_datasets()
 train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
     train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
 )
+
+# save data stats
+data_mean, data_std = loader.get_mean_std()
+if (not dist.is_initialized()) or dist.get_rank() == 0:
+    norm_path = f"data_stats_sequence_of_{n_unroll}.npz"
+    if not os.path.exists(norm_path):
+        np.savez(
+            norm_path,
+            mean=(data_mean.detach().cpu().numpy()
+                  if isinstance(data_mean, torch.Tensor) else np.asarray(data_mean)),
+            std=(data_std.detach().cpu().numpy()
+                 if isinstance(data_std, torch.Tensor) else np.asarray(data_std)),
+        )
+        print(f"[Rank 0] Saved normalization stats → {norm_path}")
+    else:
+        print(f"[Rank 0] Normalization stats already exist → {norm_path}")
+
 
 if dist.get_rank() == 0:  # only run validation on rank 0
     test_loader = torch.utils.data.DataLoader(
@@ -102,17 +121,22 @@ sample_x, sample_y = train_ds[0]
 _, _, H, W = sample_x.shape     # (n_unroll, C, H, W)
 
 # Initialize model
-ckpt = torch.load("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt", map_location="cpu")
-state = ckpt["model_state_dict"]
-model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
-missing, unexpected = model_adj.load_state_dict(state, strict=False)
-if dist.get_rank() == 0:
-    print("Transfer load: missing keys:", missing)
-    print("Transfer load: unexpected keys:", unexpected)
+if transfer_learning:   # starts from a pretrained model
+    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt", map_location="cpu")
+    state = ckpt["model_state_dict"]
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+    missing, unexpected = model_adj.load_state_dict(state, strict=False)
+    if dist.get_rank() == 0:
+        print("Transfer load: missing keys:", missing)
+        print("Transfer load: unexpected keys:", unexpected)
 
-optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
-model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj)
-model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj)
+    model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+else:
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
 scheduler = None
