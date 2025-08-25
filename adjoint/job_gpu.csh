@@ -1,11 +1,11 @@
 #PBS -S /bin/csh
 #PBS -q gpu_normal
-#PBS -l select=1:ncpus=36:ngpus=4:mem=240GB:model=mil_a100
+#PBS -l select=1:ncpus=48:ngpus=4:mem=400GB:model=mil_a100
 #PBS -l place=scatter:excl
-#PBS -l walltime=24:00:00
+#PBS -l walltime=20:00:00
 #PBS -j oe 
 #PBS -koed     
-#PBS -o /nobackup/smousav2/adjoint_learning/SSH_only_parallel/Logs/ssh_only_all_data_all_pair.log
+#PBS -o /nobackup/smousav2/adjoint_learning/SSH_only_rollout_loss/Logs/ssh_only_sequence_of_3.log
 #PBS -m bea
 #PBS -N ssh_only
 #PBS -r n
@@ -22,7 +22,7 @@ setenv PYTHONUNBUFFERED 1
 set CONDA_PYTHON=/nobackup/smousav2/.conda/envs/samudra/bin/python
 
 # Navigate to your project directory
-cd /nobackup/smousav2/adjoint_learning/SSH_only_parallel
+cd /nobackup/smousav2/adjoint_learning/SSH_only_rollout_loss
 
 # Run your test script
 echo "Running PyTorch model on multiple GPU..."
@@ -31,7 +31,7 @@ ${CONDA_PYTHON} -m torch.distributed.run \
     --standalone \
     --nproc_per_node=4 \
     --nnodes=1 \
-    ssh_only_all_data_all_pair.py
+    ssh_only_sequence_of_3.py
 echo "Done."
 
 # Deactivate Conda
