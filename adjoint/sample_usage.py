@@ -43,6 +43,7 @@ idx_out_train = [4,5,6,7,8]
 idx_in_test = [8]
 idx_out_test = [9]
 n_epochs = 1000
+transfer_learning = True
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -77,6 +78,7 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_out_train=idx_out_train,
     idx_in_test=idx_in_test,
     idx_out_test=idx_out_test,
+    wet=wet,
     pred_residual=pred_residual,
     remove_pole=remove_pole
 )
@@ -98,7 +100,6 @@ else:
     test_loader = None
 train_norm, test_norm = loader.get_norms()
 
-
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
 _, H, W = sample_x.shape
@@ -108,16 +109,29 @@ _, H, W = sample_x.shape
 # embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
 
 # Initialize model
-model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
-optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+if transfer_learning:   # starts from a pretrained model
+    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt", map_location="cpu")
+    state = ckpt["model_state_dict"]
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+    missing, unexpected = model_adj.load_state_dict(state, strict=False)
+    if dist.get_rank() == 0:
+        print("Transfer load: missing keys:", missing)
+        print("Transfer load: unexpected keys:", unexpected)
 
-model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj)
+    model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+else:
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
 scheduler = None
 
 # Train the model
-checkpoint_path = "checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt"
+checkpoint_path = "checkpoints/checkpoint_all_data_all_pair_one_step_interval_pole_removed.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 

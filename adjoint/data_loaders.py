@@ -2,6 +2,7 @@ import xarray as xr
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset, DistributedSampler
+from post_processing import normalization_constants
 
 
 def get_distributed_loaders(train_ds, test_ds, batch_size, num_workers=4, generator=None, pin_memory=False):
@@ -50,6 +51,7 @@ class AdjointDatasetFromNetCDF:
                  idx_out_train,              # Temporal index of output variable in training set
                  idx_in_test,                # Temporal index of input variable in test set
                  idx_out_test,               # Temporal index of output variable in test set
+                 wet,
                  pred_residual=False,        # Whether to predict residuals
                  remove_pole=False,          # Whether to remove pole points
                  cell_area=None,
@@ -57,15 +59,18 @@ class AdjointDatasetFromNetCDF:
                  engine="netcdf4"            # Engine to use for reading NetCDF
                 ):
         self.device = device
+        wet = wet.to(device)
 
         # Load the NetCDF file
         ds = xr.open_dataset(data_path, engine=engine)
-        if remove_pole:
-            ref = ds[var_name].isel(lat=-1, lon=0)  # Reference point at the pole
-            ds[var_name] = ds[var_name] - ref
         data = ds[var_name].values            # Shape: (N_targets, T, C, H, W)
         data = torch.tensor(data, dtype=torch.float32, device=device)
+        if remove_pole:
+            wet_mask = (wet > 0).to(data.dtype)  
+            ref = data[:, :, :, -1, 0]  # Reference point at the pole
+            data = data - ref[..., None, None] * wet_mask[None, None, None, :, :]
         ds.close()
+        
         if cell_area is not None:
             data = data * cell_area.to(device)
 
@@ -91,14 +96,14 @@ class AdjointDatasetFromNetCDF:
         # self.x_test_norms = torch.norm(self.x_test.view(self.x_test.shape[0], -1), dim=1)
 
         # Compute maximum of the absolute value over channel, height, width: shape → (N*T,)
-        self.x_train_norms = self.x_train.abs().amax(dim=(1,2,3))
-        self.x_test_norms = self.x_test.abs().amax(dim=(1,2,3))
+        self.x_train_norms = normalization_constants(self.x_train)
+        self.x_test_norms = normalization_constants(self.x_test)
 
         # Normalize input and output by input norm
-        self.x_train = self.x_train / self.x_train_norms.view(-1, 1, 1, 1)
-        self.y_train = self.y_train / self.x_train_norms.view(-1, 1, 1, 1)
-        self.x_test = self.x_test / self.x_test_norms.view(-1, 1, 1, 1)
-        self.y_test = self.y_test / self.x_test_norms.view(-1, 1, 1, 1)
+        self.x_train = self.x_train / self.x_train_norms
+        self.y_train = self.y_train / self.x_train_norms
+        self.x_test = self.x_test / self.x_test_norms
+        self.y_test = self.y_test / self.x_test_norms
 
 
     def get_datasets(self):
