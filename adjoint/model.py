@@ -175,14 +175,28 @@ def save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path="che
             "best_val_loss": best_val_loss,
         }, path)
         print(f"[Rank {dist.get_rank() if dist.is_initialized() else 0}] Checkpoint saved at epoch {epoch} → {path}")
-    
+
+class AreaWeightedLoss(torch.nn.Module):
+    def __init__(self, area_weighting):
+        super().__init__()
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        self.register_buffer("weight", area_weighting.contiguous())
+
+    def forward(self, pred, target):
+        """
+        Computes the area-weighted MSE loss.
+        :param pred: [B, C_out, H, W]
+        :param target: [B, C_out, H, W]
+        :return: scalar loss value
+        """
+        return torch.mean(self.weight * (pred - target) ** 2)
 
 
 def train_adjoint_model(
         model, 
         dataloader, 
         optimizer, 
-        label_embedder=None,
         device="cuda", 
         num_epochs=50, 
         scheduler=None, 
@@ -193,163 +207,101 @@ def train_adjoint_model(
         patience=5,
         start_epoch=1,
         best_val_loss=float("inf"),
-        checkpoint_path=None
+        checkpoint_path=None,
+        area_weighting=None
         ):
     model.to(device)
     best_epoch = start_epoch - 1
     no_improve_count = 0
 
-    use_labels = True if label_embedder is not None else False
+    is_dist = dist.is_initialized()
+    rank = dist.get_rank() if is_dist else 0
+    world_size = dist.get_world_size() if is_dist else 1
 
-    if use_labels:
-        for epoch in range(start_epoch, num_epochs + 1):
-            if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
-                dataloader.sampler.set_epoch(epoch)
-
-            # === Training ===
-            model.train()
-            total_loss = 0.0
-            for xb, yb, labelb in dataloader:
-                # print("check training")
-                xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
-                yb = yb.to(device, non_blocking=True)  # shape: (B, C_out, H, W)
-                labelb = labelb.to(device, non_blocking=True)  # shape: (B, C_in)
-
-                # Scaling
-                alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
-                xb_scaled = xb * alpha
-                yb_scaled = yb * alpha
-
-                # Get one-hot encoding of labels
-                onehot = labelb.float()  #torch.nn.functional.one_hot(labelb, num_classes=label_embedder.enc_dim).float()  # (B, C_in)
-                embed = label_embedder(onehot, batch_size=xb.shape[0])  # (B, embed_dim, H, W)
-                xb_scaled = torch.cat([xb_scaled, embed], dim=1)  # (B, C_in+embed_dim, H, W)
-
-                optimizer.zero_grad()
-                pred = model(xb_scaled)
-                loss = torch.nn.functional.mse_loss(pred, yb_scaled)
-                loss.backward()
-                optimizer.step()
-
-                # synchronize this batch’s loss across all ranks
-                loss_tensor = loss.detach()
-                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-                total_loss += loss_tensor.item() / dist.get_world_size()
-            
-            avg_train_loss = total_loss / len(dataloader)
-
-            # === Validation ===
-            avg_val_loss = None
-            if val_loader is not None:
-                model.eval()
-                val_loss = 0.0
-                with torch.no_grad():
-                    for xb, yb, labelb in val_loader:
-                        xb = xb.to(device, non_blocking=True)
-                        yb = yb.to(device, non_blocking=True)
-                        labelb = labelb.to(device, non_blocking=True)
-                        onehot = labelb.float()  #torch.nn.functional.one_hot(labelb, num_classes=label_embedder.enc_dim).float()  # (B, C_in)
-                        embed = label_embedder(onehot, batch_size=xb.shape[0])  # (B, embed_dim, H, W)
-                        xb = torch.cat([xb, embed], dim=1)  # (B, C_in+embed_dim, H, W)
-                        pred = model(xb)
-                        loss = torch.nn.functional.mse_loss(pred, yb)
-                        val_loss += loss.item()
-                avg_val_loss = val_loss / len(val_loader)
-
-                # Early stopping logic
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    best_epoch = epoch
-                    no_improve_count = 0
-                    if checkpoint_path and epoch % checkpoint_every == 0:
-                        save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
-                else:
-                    no_improve_count += 1
-                    if early_stopping and no_improve_count >= patience:
-                        if not dist.is_initialized() or dist.get_rank() == 0:
-                            print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
-                        break
-
-
-            if scheduler is not None:
-                scheduler.step()
-        
-            if epoch % log_every == 0:
-                msg = f"[Epoch {epoch:03d}] Train Loss: {avg_train_loss:.6f}"
-                if avg_val_loss is not None:
-                    msg += f" | Val Loss: {avg_val_loss:.6f}"
-                if not dist.is_initialized() or dist.get_rank() == 0:
-                    print(msg)
-
+    if area_weighting is not None:
+        loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
     else:
-        for epoch in range(start_epoch, num_epochs + 1):
-            if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
-                dataloader.sampler.set_epoch(epoch)
+        loss_fn = torch.nn.MSELoss()
 
-            # === Training ===
-            model.train()
-            total_loss = 0.0
-            for xb, yb in dataloader:
-                # print("check training")
-                xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
-                yb = yb.to(device, non_blocking=True)  # shape: (B, C_out, H, W)
+    for epoch in range(start_epoch, num_epochs + 1):
+        if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
+            dataloader.sampler.set_epoch(epoch)
 
-                # Scaling
-                alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
-                xb_scaled = xb * alpha
-                yb_scaled = yb * alpha
+        # === Training ===
+        model.train()
+        total_loss = 0.0
+        for xb, yb in dataloader:
+            # print("check training")
+            xb = xb.to(device, non_blocking=True)  # shape: (B, C_in, H, W)
+            yb = yb.to(device, non_blocking=True)  # shape: (B, C_out, H, W)
 
-                optimizer.zero_grad()
-                pred = model(xb_scaled)
-                loss = torch.nn.functional.mse_loss(pred, yb_scaled)
-                loss.backward()
-                optimizer.step()
+            # Scaling
+            alpha = torch.rand(xb.shape[0], 1, 1, 1, device=xb.device) * 2  # scale ∈ [0,2)
+            xb_scaled = xb * alpha
+            yb_scaled = yb * alpha
 
-                # synchronize this batch’s loss across all ranks
-                loss_tensor = loss.detach()
+            optimizer.zero_grad()
+            pred = model(xb_scaled)
+            loss = loss_fn(pred, yb_scaled)
+            loss.backward()
+            optimizer.step()
+
+            # synchronize this batch’s loss across all ranks
+            loss_tensor = loss.detach()
+            if is_dist:
                 dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-                total_loss += loss_tensor.item() / dist.get_world_size()
-            
-            avg_train_loss = total_loss / len(dataloader)
-
-            # === Validation ===
-            avg_val_loss = None
-            if val_loader is not None:
-                model.eval()
-                val_loss = 0.0
-                with torch.no_grad():
-                    for xb, yb in val_loader:
-                        xb = xb.to(device, non_blocking=True)
-                        yb = yb.to(device, non_blocking=True)
-                        pred = model(xb)
-                        loss = torch.nn.functional.mse_loss(pred, yb)
-                        val_loss += loss.item()
-                avg_val_loss = val_loss / len(val_loader)
-
-                # Early stopping logic
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    best_epoch = epoch
-                    no_improve_count = 0
-                    if checkpoint_path and epoch % checkpoint_every == 0:
-                        save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
-                else:
-                    no_improve_count += 1
-                    if early_stopping and no_improve_count >= patience:
-                        if not dist.is_initialized() or dist.get_rank() == 0:
-                            print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
-                        break
-
-
-            if scheduler is not None:
-                scheduler.step()
+            total_loss += loss_tensor.item() / world_size
         
-            if epoch % log_every == 0:
-                msg = f"[Epoch {epoch:03d}] Train Loss: {avg_train_loss:.6f}"
-                if avg_val_loss is not None:
-                    msg += f" | Val Loss: {avg_val_loss:.6f}"
-                if not dist.is_initialized() or dist.get_rank() == 0:
-                    print(msg)
+        avg_train_loss = total_loss / len(dataloader)
+
+        # === Validation ===
+        avg_val_loss = None
+        should_stop = False
+        if val_loader is not None and rank == 0:
+            model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for xb, yb in val_loader:
+                    xb = xb.to(device, non_blocking=True)
+                    yb = yb.to(device, non_blocking=True)
+                    pred = model(xb)
+                    loss = loss_fn(pred, yb)
+                    val_loss += loss.item()
+            avg_val_loss = val_loss / len(val_loader)
+
+            # Early stopping logic
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                best_epoch = epoch
+                no_improve_count = 0
+                if checkpoint_path and (epoch % checkpoint_every == 0):
+                    save_checkpoint(model, optimizer, scheduler, epoch, best_val_loss, path=checkpoint_path)
+            else:
+                no_improve_count += 1
+            should_stop = early_stopping and (no_improve_count >= patience)
+
+        # ===== BROADCAST decision to all ranks =====
+        if is_dist:
+            stop_tensor = torch.tensor([1 if should_stop else 0], device=device)
+            best_tensor = torch.tensor([best_val_loss], device=device)
+            dist.broadcast(stop_tensor, src=0)
+            dist.broadcast(best_tensor, src=0)
+            should_stop = bool(stop_tensor.item())
+            best_val_loss = float(best_tensor.item())
+
+        if scheduler is not None:
+            scheduler.step()
+    
+        if rank == 0 and epoch % log_every == 0:
+            msg = f"[Epoch {epoch:03d}] Train Loss: {avg_train_loss:.6f}"
+            if avg_val_loss is not None:
+                msg += f" | Val Loss: {avg_val_loss:.6f}"
+            print(msg)
+
+        if should_stop:
+            if rank == 0:
+                print(f"Early stopping at epoch {epoch} (best at epoch {best_epoch}, val_loss={best_val_loss:.6f})")
+            break
 
     
 

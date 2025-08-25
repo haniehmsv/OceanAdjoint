@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
 
 # add OceanAdjoint to path
-sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_parallel/OceanAdjoint/adjoint")
+sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/OceanAdjoint/adjoint")
 import model
 import data_loaders
 
@@ -32,22 +32,17 @@ def init_distributed_mode():
     return torch.device("cuda", local_rank), local_rank
 
 
-labels = None
 C_in = 1
 C_out = 1
 pred_residual = True
-remove_pole = True
 data_path = "/nobackupp17/ifenty/AD_ML/2025-07-28/etan_ad_20250728b_combined.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
-controls_path = "/nobackupp17/ifenty/AD_ML/2025-07-30b_adcontrols/consolidated"
-u_stress_path = os.path.join(controls_path, "ustress_ad_2025-07-31.nc")
-v_stress_path = os.path.join(controls_path, "vstress_ad_2025-07-31.nc")
-eta_ad_500_val_points_path = "/nobackupp17/ifenty/AD_ML/2025-07-30/500_etan_validation_points/etan_ad_500_validation_point.nc"
-idx_in_train = [3,4,5]
-idx_out_train = [6,7,8]
-idx_in_test = [6]
+idx_in_train = [3,4,5,6,7]
+idx_out_train = [4,5,6,7,8]
+idx_in_test = [8]
 idx_out_test = [9]
 n_epochs = 1000
+transfer_learning = True
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -56,11 +51,22 @@ device, local_rank = init_distributed_mode()
 wet_mask_loader = data_loaders.WetMaskFromNetCDF(
     wet_path=wet_mask_path,
     var_name='wet_mask',
-    device=device,
     engine="netcdf4"
 )
 wet = wet_mask_loader.get_wet_mask()  # Shape: (H, W)
 
+# load cell area
+cell_area_loader = data_loaders.WetMaskFromNetCDF(
+    wet_path=wet_mask_path,
+    var_name='area',
+    engine="netcdf4"
+)
+cell_area = cell_area_loader.get_wet_mask()  # Shape: (H, W)
+area_weighting = (cell_area/cell_area.max()).to(device)
+
+# DataLoader with reproducible shuffling
+g = torch.Generator()
+g.manual_seed(seed)
 
 # load data
 loader = data_loaders.AdjointDatasetFromNetCDF(
@@ -71,15 +77,14 @@ loader = data_loaders.AdjointDatasetFromNetCDF(
     idx_out_train=idx_out_train,
     idx_in_test=idx_in_test,
     idx_out_test=idx_out_test,
-    label=None,
+    wet=wet,
     pred_residual=pred_residual,
-    remove_pole=remove_pole,
     device=device
 )
 
 train_ds, test_ds = loader.get_datasets()
-train_loader, test_loader, train_sampler, test_sampler = data_loaders.get_distributed_loaders(
-    train_ds, test_ds, batch_size=16, num_workers=4
+train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
+    train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
 )
 
 if dist.get_rank() == 0:  # only run validation on rank 0
@@ -94,35 +99,38 @@ else:
     test_loader = None
 train_norm, test_norm = loader.get_norms()
 
-# DataLoader with reproducible shuffling
-g = torch.Generator()
-g.manual_seed(seed)
-
-
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  # (C, H, W)
 _, H, W = sample_x.shape
 
-# Create label embedding
-embed_dim = 8
-embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
+# # Create label embedding
+# embed_dim = 8
+# embedder = model.CostFunctionEmbedding(enc_dim=C_in, embed_dim=embed_dim, spatial_shape=(H, W))
 
 # Initialize model
-world_size = dist.get_world_size()
-if labels is not None:
-    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in+embed_dim, out_channels=C_out)).to(device)
-    optimizer = torch.optim.AdamW(list(model_adj.parameters()) + list(embedder.parameters()), lr=1e-4, weight_decay=1e-5)
+if transfer_learning:   # starts from a pretrained model
+    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt", map_location="cpu")
+    state = ckpt["model_state_dict"]
+    model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
+    missing, unexpected = model_adj.load_state_dict(state, strict=False)
+    if dist.get_rank() == 0:
+        print("Transfer load: missing keys:", missing)
+        print("Transfer load: unexpected keys:", unexpected)
+
+    optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    model_adj = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_adj)
+    model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 else:
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
     optimizer = torch.optim.AdamW(model_adj.parameters(), lr=1e-4, weight_decay=1e-5)
+    model_adj = DDP(model_adj, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
-model_adj = DDP(model_adj, device_ids=[local_rank])
 
 # scheduler = CosineAnnealingLR(optimizer,T_max=n_epochs, eta_min=0.0)
 scheduler = None
 
 # Train the model
-checkpoint_path = "checkpoints/checkpoint_all_data_all_pair.pt"
+checkpoint_path = "checkpoints/checkpoint_all_data_all_pair_one_step_interval_pole_removed.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
@@ -146,10 +154,10 @@ model.train_adjoint_model(
     num_epochs=n_epochs,
     scheduler=scheduler,
     patience=20,
-    label_embedder=None,
     checkpoint_path=checkpoint_path,
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
-    device=device
+    device=device,
+    area_weighting=area_weighting
 )
 dist.destroy_process_group()
