@@ -1,22 +1,8 @@
 ### Modify these functions for your use case
 import torch
 
-def normalization_constants(input):
-    """
-    calculates normalization constants for the input sequence.
-    
-    Args:
-        input: [B, C_in, H, W]     # True adjoint sequence
-
-    Returns:
-        x_norms: [B,] # Normalization constants
-    """
-    norms = input.abs().amax(dim=(1, 2, 3), keepdim=True)  # Maximum absolute value over channel, height, width, shape: [B,]
-
-    return norms
-
-
-def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, cell_area=None):
+@torch.no_grad()
+def generate_adjoint_rollout(model, x_seq_true, data_mean, data_std, wet=None, pred_residual=False, remove_pole=False, cell_area=None):
     """
     Run backward adjoint rollout using trained model.
     
@@ -31,6 +17,12 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, c
     """
     device = next(model.parameters()).device
     wet = wet.to(device)
+    if remove_pole:
+        wet[-1, 0] = 0
+    x_seq_true = x_seq_true.to(device)
+    data_mean = data_mean.to(device)
+    data_std = data_std.to(device)
+
     model.eval()
 
     # Add batch dim if missing
@@ -41,26 +33,27 @@ def generate_adjoint_rollout(model, x_seq_true, wet=None, pred_residual=False, c
 
     y_seq_true = x_seq_true[:, 1:] * wet  # λ(T-1) to λ(T-τ) shape: [B, T-1, C_in, H, W]
 
-    x_seq_true = x_seq_true.to(device)
     B, T, C_in, H, W = x_seq_true.shape
+    mean = data_mean.view(1, C_in, H, W)
+    std = data_std.view(1, C_in, H, W)
+
+    # standardize input data to the model
     preds = []
-    input = x_seq_true[:, 0].clone()  # λ(T) shape: [B, C_in, H, W]
-    norms = normalization_constants(input)
-    input /= norms  # Normalize input by its norm
+    input = x_seq_true[:, 0].clone()
+    input = (input - mean) / std  # λ(T) shape: [B, C_in, H, W]
 
-    with torch.no_grad():
-        for t in range(T-1):
-            y_t = model(input)  # shape: [B, C_out, H, W]
-            if pred_residual:
-                y_t[:, :C_in] = y_t[:, :C_in] + input
-            y_t *= norms
-            if wet is not None:
-                y_t *= wet
+    for _ in range(T-1):
+        y_t_stdized = model(input)  # shape: [B, C_out, H, W]
+        if pred_residual:
+            y_t_stdized[:, :C_in] = y_t_stdized[:, :C_in] + input
 
-            preds.append(y_t)
-            input = y_t[:,:C_in].clone()
-            norms = normalization_constants(input)
-            input /= norms
+        if wet is not None:
+            y_t_stdized *= wet
+
+        y_t = y_t_stdized * std + mean  # unnormalize
+        y_t *= wet
+        preds.append(y_t.clone())
+        input = y_t_stdized
 
     y_seq = torch.stack(preds, dim=1)  # shape: [B, T-1, C_out, H, W]
 
