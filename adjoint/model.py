@@ -191,7 +191,7 @@ class RolloutLoss(torch.nn.Module):
     def forward(self, model, x_seq_true, y_seq_true):
         """
         x_seq_true: [B, n_unroll, C_in, H, W]
-        y_seq_true: [B, n_unroll, C_out, H, W]  (targets at each rollout step)
+        y_seq_true: [B, n_unroll, C_out_total, H, W]  (targets at each rollout step)
         Returns: scalar loss and optionally the predicted sequence
         """
         # start from the first frame (time t)
@@ -200,7 +200,7 @@ class RolloutLoss(torch.nn.Module):
 
         for s in range(self.n_unroll):
             y_true = y_seq_true[:, s]
-            y_pred = model(current)                       # [B, C_out, H, W]
+            y_pred = model(current)                       # [B, C_out_total, H, W]
 
             # MSE of this step
             step_loss = self.loss_fn(y_pred, y_true)
@@ -211,6 +211,38 @@ class RolloutLoss(torch.nn.Module):
                 current = current + y_pred[:, :self.C_in]
             else:
                 current = y_pred[:, :self.C_in]
+
+        return loss / self.n_unroll
+    
+
+class ForcingLoss(torch.nn.Module):
+    """only with n_unroll=1
+
+    Args:
+        torch (_type_): _description_
+    """
+    def __init__(self, n_unroll, C_in, H, W, pred_residual, loss_fn):
+        super().__init__()
+        self.n_unroll = int(n_unroll)
+        self.C_in = int(C_in)
+        self.H, self.W = int(H), int(W)
+        self.loss_fn = loss_fn
+        self.pred_residual = pred_residual
+
+    def forward(self, model, x_seq_true, y_seq_true):
+        """
+        x_seq_true: [B, n_unroll, C_in, H, W]
+        y_seq_true: [B, n_unroll, C_out, H, W]  (targets at each rollout step)
+        Returns: scalar loss and optionally the predicted sequence
+        """
+        # start from the first frame (time t)
+        current = x_seq_true[:, 0]                          # [B, C_in, H, W]
+
+        y_true = y_seq_true[:, 0]
+        y_pred = model(current)                       # [B, C_out, H, W]
+
+        # MSE of this step
+        loss = self.loss_fn(y_pred, y_true)
 
         return loss / self.n_unroll
 
@@ -249,7 +281,8 @@ def train_adjoint_model(
         best_val_loss=float("inf"),
         checkpoint_path=None,
         area_weighting=None,
-        pred_residual=False
+        pred_residual=False,
+        pred_status="state"
         ):
     
     model.to(device)
@@ -267,7 +300,11 @@ def train_adjoint_model(
 
     sample_x, _ = dataloader.dataset[0]          # sample_x: [n_unroll, C_in, H, W]
     n_unroll, C_in, H, W = sample_x.shape
-    roll_loss = RolloutLoss(n_unroll, C_in, H, W, pred_residual, loss_fn).to(device)
+
+    if pred_status == "forcing":
+        roll_loss = ForcingLoss(n_unroll, C_in, H, W, pred_residual, loss_fn).to(device)
+    else:
+        roll_loss = RolloutLoss(n_unroll, C_in, H, W, pred_residual, loss_fn).to(device)
 
     for epoch in range(start_epoch, num_epochs + 1):
         if hasattr(dataloader, "sampler") and isinstance(dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
