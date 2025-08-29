@@ -99,8 +99,8 @@ class AdjointRolloutDatasetFromNetCDF:
                 f"(train windows would be {split_k} ≤ 0). Reduce val_percent or increase data length."
             )
 
-        data_mean = data[:,idx_in[0]:idx_in[0]+split_k].mean(dim=(0,1)) # [C, H, W]
-        data_std = data[:,idx_in[0]:idx_in[0]+split_k].std(dim=(0,1)) # [C, H, W]
+        data_mean = data[:,idx_in[0]:(idx_in[-val_count]+1)].mean(dim=(0,1)) # [C, H, W]
+        data_std = data[:,idx_in[0]:(idx_in[-val_count]+1)].std(dim=(0,1)) # [C, H, W]
         wet_bool = (wet > 0)
         data_mean[:, ~wet_bool] = 0
         data_std[:,  ~wet_bool] = 1
@@ -152,3 +152,126 @@ class AdjointRolloutDatasetFromNetCDF:
         """
         return self.data_mean, self.data_std
     
+
+class AdjointForcingDatasetFromNetCDF:
+    """
+    Returns short sequences for training:
+      x_seq[b] has shape [n_unroll, C_in, H, W] with times [t, t-1, ..., t-n_unroll+1]
+      y_seq[b] has shape [n_unroll, C_out_total, H, W] with times [t-1, ..., t-n_unroll]
+    """
+    def __init__(self, 
+                 path_in, var_name_in, C_in,
+                 path_out, var_name_out, C_out_total,
+                 idx_in, idx_out,                 # lists (must be consecutive pairs, e.g., [3,4,5,6,7,8] and [4,5,6,7,8,9])
+                 n_unroll,                        # rollout length during training
+                 val_percent=0.2,              # percentage of data to use for validation
+                 wet = None,
+                 pred_residual=False,
+                 remove_pole=False,          # Whether to remove pole points
+                 engine="netcdf4",
+                 device="cpu"
+                ):             
+        self.device = device 
+        wet = wet.to(device)
+
+        # Load the NetCDF file for input data
+        ds = xr.open_dataset(path_in, engine=engine)
+        data_in = ds[var_name_in].values            
+        data_in = torch.tensor(data_in, dtype=torch.float32, device=device)     # Shape: (N_targets, T_in, C_in, H, W)
+        if remove_pole:
+            wet_mask = (wet > 0).to(data_in.dtype)  
+            ref = data_in[:, :, :, -1, 0]  # Reference point at the pole
+            data_in = data_in - ref[..., None, None] * wet_mask[None, None, None, :, :]
+            wet[-1, 0] = 0  # Remove the pole point
+        ds.close()
+
+        # Load the NetCDF file for output data
+        ds = xr.open_dataset(path_out, engine=engine)
+        data_out = ds[var_name_out].values            
+        data_out = torch.tensor(data_out, dtype=torch.float32, device=device)     # Shape: (N_targets, T_out, C_out, H, W)
+        ds.close()
+
+        N, T_in, C_in, H, W = data_in.shape
+        _, T_out, C_out, _, _ = data_out.shape
+
+        idx_in = np.array(idx_in, dtype=int)
+        idx_out = np.array(idx_out, dtype=int)
+        data_combined = torch.cat([data_in, data_out], dim=2)  # Concatenate along channel dimension (C_in + C_out)
+        num_windows = len(idx_in) - n_unroll + 1
+
+        # chronological split by k
+        import math
+        val_count = max(1, math.ceil(val_percent * num_windows))
+        split_k = num_windows - val_count   # windows [0..split_k-1] for train; [split_k..] val
+        if split_k <= 0:
+            raise RuntimeError(
+                f"val_percent={val_percent} is too high for num_windows={num_windows} "
+                f"(train windows would be {split_k} ≤ 0). Reduce val_percent or increase data length."
+            )
+
+        data_mean = data_combined[:,idx_in[0]:(idx_in[-val_count]+1)].mean(dim=(0,1)) # [C_in+C_out, H, W]
+        data_std = data_combined[:,idx_in[0]:(idx_in[-val_count]+1)].std(dim=(0,1)) # [C_in+C_out, H, W]
+        wet_bool = (wet > 0)
+        data_mean[:, ~wet_bool] = 0
+        data_std[:,  ~wet_bool] = 1
+        zero_std = data_std.abs() == 0.0
+        data_std = data_std.masked_fill(zero_std, 1.0)
+        self.data_mean = data_mean
+        self.data_std = data_std
+        data_combined = (data_combined - self.data_mean) / self.data_std  # Normalize the data
+        data_in = (data_in - self.data_mean[:C_in]) / self.data_std[:C_in]  # Normalize the input data
+        data_out = (data_out - self.data_mean[C_in:]) / self.data_std[C_in:]  # Normalize the output data
+
+        if n_unroll > 1:
+            print(f"n_unroll > 1 (={n_unroll}). The output will be both ad-states and ad-forcings.")
+            C_out_total = C_in + C_out  # Predict both states and forcings
+
+        x_window = []
+        y_window = []
+        for k in range(num_windows):
+            t_in = idx_in[k : k + n_unroll]                # length n_unroll
+            t_out = idx_out[k : k + n_unroll]       # length n_unroll
+            x = data_in[:, t_in, :, :, :]          # (N, n_unroll, C_in, H, W)
+            if C_out_total > C_out:
+                # Predict both states and forcings
+                y = torch.cat([
+                    data_in[:, t_out, :, :, :],    # (N, n_unroll, C_in, H, W)
+                    data_out[:, t_out, :, :, :]         # (N, n_unroll, C_out, H, W)
+                ], dim=2)                              # (N, n_unroll, C_in + C_out, H, W)
+            else:
+                # Predict only forcings
+                y = data_out[:, t_out, :, :, :]                  # (N, n_unroll, C_out, H, W)
+            x_window.append(x)
+            y_window.append(y)
+        
+        # Stack windows across batch (N * num_windows, ...)
+        x_train = torch.cat(x_window[:split_k], dim=0)                          # (N*num_windows*train_percent, n_unroll, C_in, H, W)
+        y_train = torch.cat(y_window[:split_k], dim=0)                          # (N*num_windows*train_percent, n_unroll, C_out_total, H, W)
+        x_val   = torch.cat(x_window[split_k:], dim=0)                          # (N*num_windows*val_percent, n_unroll, C_in, H, W)
+        y_val   = torch.cat(y_window[split_k:], dim=0)                          # (N*num_windows*val_percent, n_unroll, C_out_total, H, W)
+
+        if pred_residual:
+            # y[..., :C_in] := y - x_prev  (work in CPU, no in-place on saved tensors)
+            # x_prev is x at t_in[1:] aligned with y at t_out[:]
+            y_train[:, :, :C_in] = y_train[:, :, :C_in] - x_train
+            y_val[:, :, :C_in] = y_val[:, :, :C_in] - x_val
+
+
+        self.train = (x_train, y_train)
+        self.val   = (x_val, y_val)
+
+    def get_datasets(self):
+        """
+        Returns: (train_ds, val_ds)
+        """
+        x_tr, y_tr = self.train
+        train_ds = TensorDataset(x_tr, y_tr)
+        x_va, y_va = self.val
+        val_ds = TensorDataset(x_va, y_va)
+        return train_ds, val_ds
+    
+    def get_mean_std(self):
+        """
+        Returns the mean and std of training dataused for normalization.
+        """
+        return self.data_mean, self.data_std
