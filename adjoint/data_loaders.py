@@ -99,8 +99,8 @@ class AdjointRolloutDatasetFromNetCDF:
                 f"(train windows would be {split_k} ≤ 0). Reduce val_percent or increase data length."
             )
 
-        data_mean = data[:,idx_in[0]:idx_in[0]+split_k].mean(dim=(0,1)) # [C, H, W]
-        data_std = data[:,idx_in[0]:idx_in[0]+split_k].std(dim=(0,1)) # [C, H, W]
+        data_mean = data[:,idx_in[0]:(idx_in[-val_count]+1)].mean(dim=(0,1)) # [C, H, W]
+        data_std = data[:,idx_in[0]:(idx_in[-val_count]+1)].std(dim=(0,1)) # [C, H, W]
         wet_bool = (wet > 0)
         data_mean[:, ~wet_bool] = 0
         data_std[:,  ~wet_bool] = 1
