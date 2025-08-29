@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
 # add OceanAdjoint to path
-sys.path.append("/nobackup/smousav2/adjoint_learning/SSH_only_rollout_loss/OceanAdjoint/adjoint")
+sys.path.append("/nobackup/smousav2/adjoint_learning/forcing/OceanAdjoint/adjoint")
 import model
 import data_loaders
 
@@ -32,7 +32,7 @@ def init_distributed_mode():
 
 # === Parameters ===
 C_in = 1
-C_out = 1
+C_out = C_in
 pred_residual = False
 remove_pole = True
 transfer_learning = False
@@ -91,7 +91,7 @@ if pred_status == "state":
         val_percent=val_percent
     )
 else:
-    loader = data_loaders.AdjointForcingRolloutDatasetFromNetCDF(
+    loader = data_loaders.AdjointForcingDatasetFromNetCDF(
         path_in=path_in,
         var_name_in='etan_ad',
         C_in=C_in,

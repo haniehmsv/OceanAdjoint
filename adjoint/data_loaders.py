@@ -218,7 +218,6 @@ class AdjointForcingDatasetFromNetCDF:
         data_std = data_std.masked_fill(zero_std, 1.0)
         self.data_mean = data_mean
         self.data_std = data_std
-        data_combined = (data_combined - self.data_mean) / self.data_std  # Normalize the data
         data_in = (data_in - self.data_mean[:C_in]) / self.data_std[:C_in]  # Normalize the input data
         data_out = (data_out - self.data_mean[C_in:]) / self.data_std[C_in:]  # Normalize the output data
 
