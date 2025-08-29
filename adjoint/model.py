@@ -282,7 +282,7 @@ def train_adjoint_model(
         checkpoint_path=None,
         area_weighting=None,
         pred_residual=False,
-        pred_status="state"
+        pred_status=None
         ):
     
     model.to(device)

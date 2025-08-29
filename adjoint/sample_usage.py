@@ -33,16 +33,24 @@ def init_distributed_mode():
 # === Parameters ===
 C_in = 1
 C_out = 1
-pred_residual = True
+pred_residual = False
 remove_pole = True
-data_path = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/consolidated/etan_ad_2025-08-05b_3594_consolidated.nc"
+transfer_learning = False
+path_in = "/nobackupp17/ifenty/AD_ML/2025-08-05b/all_adetan_training_points/consolidated/etan_ad_2025-08-05b_3594_consolidated.nc"
+path_out = ""
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
 idx_in = [3,4,5,6,7,8]
 idx_out = [4,5,6,7,8,9]
 n_unroll = 3
 n_epochs = 1000
 val_percent = 0.1
-transfer_learning = False
+pred_status = "forcing"  # "state", "forcing", "state_and_forcing"
+if pred_status=="forcing":
+    n_unroll = 1
+    C_out = 2
+elif pred_status=="state_and_forcing":
+    C_out = 3
+# ==================================
 
 # === Distributed init ===
 device, local_rank = init_distributed_mode()
@@ -69,18 +77,35 @@ g = torch.Generator()
 g.manual_seed(seed)
 
 # load data
-loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
-    data_path=data_path,
-    var_name='etan_ad',
-    C_in=C_in,
-    idx_in=idx_in,
-    idx_out=idx_out,
-    n_unroll=n_unroll,
-    wet=wet,
-    pred_residual=pred_residual,
-    remove_pole=remove_pole,
-    val_percent=val_percent
-)
+if pred_status == "state":
+    loader = data_loaders.AdjointRolloutDatasetFromNetCDF(
+        data_path=path_in,
+        var_name='etan_ad',
+        C_in=C_in,
+        idx_in=idx_in,
+        idx_out=idx_out,
+        n_unroll=n_unroll,
+        wet=wet,
+        pred_residual=pred_residual,
+        remove_pole=remove_pole,
+        val_percent=val_percent
+    )
+else:
+    loader = data_loaders.AdjointForcingRolloutDatasetFromNetCDF(
+        path_in=path_in,
+        var_name_in='etan_ad',
+        C_in=C_in,
+        path_out=path_out,
+        var_name_out='controls_ad',
+        C_out=C_out,
+        idx_in=idx_in,
+        idx_out=idx_out,
+        n_unroll=n_unroll,
+        wet=wet,
+        pred_residual=pred_residual,
+        remove_pole=remove_pole,
+        val_percent=val_percent
+    )
 
 train_ds, test_ds = loader.get_datasets()
 train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
@@ -118,7 +143,7 @@ else:
 
 # Get first batch of data to infer H, W
 sample_x, sample_y = train_ds[0]  
-_, _, H, W = sample_x.shape     # (n_unroll, C, H, W)
+_, _, H, W = sample_x.shape     # (n_unroll, C_in, H, W)
 
 # Initialize model
 if transfer_learning:   # starts from a pretrained model
@@ -142,7 +167,7 @@ else:
 scheduler = None
 
 # Train the model
-checkpoint_path = f"checkpoints/checkpoint_sequence_of_{n_unroll}.pt"
+checkpoint_path = f"checkpoints/checkpoint_sequence_of_{n_unroll}_{pred_status}.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
@@ -171,6 +196,7 @@ model.train_adjoint_model(
     best_val_loss=best_val_loss,
     device=device,
     pred_residual=pred_residual,
-    area_weighting=area_weighting
+    area_weighting=area_weighting,
+    pred_status=pred_status
 )
 dist.destroy_process_group()
