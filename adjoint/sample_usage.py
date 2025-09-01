@@ -98,7 +98,7 @@ else:
         C_in=C_in,
         path_out=path_out,
         var_name_out='ad_zonal_and_meridional_stress',
-        C_out=C_out,
+        C_out_total=C_out,
         idx_in=idx_in,
         idx_out=idx_out,
         n_unroll=n_unroll,
