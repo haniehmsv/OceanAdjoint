@@ -109,14 +109,18 @@ else:
     )
 
 train_ds, test_ds = loader.get_datasets()
+if dist.get_rank() == 0:
+    test_loader = DataLoader(test_ds, batch_size=64, shuffle=False, num_workers=0, pin_memory=True)
+else:
+    test_loader = None
 train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
-    train_ds, test_ds, batch_size=16, num_workers=4, generator=g, pin_memory=True
+    train_ds, test_ds=None, batch_size=16, num_workers=4, generator=g, pin_memory=False
 )
 
 # save data stats
 data_mean, data_std = loader.get_mean_std()
 if (not dist.is_initialized()) or dist.get_rank() == 0:
-    norm_path = f"data_stats_sequence_of_{n_unroll}.npz"
+    norm_path = f"data_stats_sequence_of_{n_unroll}_{pred_status}.npz"
     if not os.path.exists(norm_path):
         np.savez(
             norm_path,
