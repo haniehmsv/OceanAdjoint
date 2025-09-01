@@ -221,13 +221,12 @@ class ForcingLoss(torch.nn.Module):
     Args:
         torch (_type_): _description_
     """
-    def __init__(self, n_unroll, C_in, H, W, pred_residual, loss_fn):
+    def __init__(self, n_unroll, C_in, H, W, loss_fn):
         super().__init__()
         self.n_unroll = int(n_unroll)
         self.C_in = int(C_in)
         self.H, self.W = int(H), int(W)
         self.loss_fn = loss_fn
-        self.pred_residual = pred_residual
 
     def forward(self, model, x_seq_true, y_seq_true):
         """
@@ -302,7 +301,7 @@ def train_adjoint_model(
     n_unroll, C_in, H, W = sample_x.shape
 
     if pred_status == "forcing":
-        roll_loss = ForcingLoss(n_unroll, C_in, H, W, pred_residual, loss_fn).to(device)
+        roll_loss = ForcingLoss(n_unroll, C_in, H, W, loss_fn).to(device)
     else:
         roll_loss = RolloutLoss(n_unroll, C_in, H, W, pred_residual, loss_fn).to(device)
 
