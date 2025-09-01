@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 
 # add OceanAdjoint to path
-sys.path.append("/nobackup/smousav2/adjoint_learning/forcing/OceanAdjoint/adjoint")
+sys.path.append("/nobackup/smousav2/adjoint_learning/Controls/OceanAdjoint/adjoint")
 import model
 import data_loaders
 
