@@ -48,6 +48,7 @@ pred_status = "forcing"  # "state", "forcing", "state_and_forcing"
 if pred_status=="forcing":
     n_unroll = 1
     C_out = 2
+    pred_residual = False
 elif pred_status=="state_and_forcing":
     C_out = 3
 # ==================================
