@@ -148,7 +148,7 @@ _, _, H, W = sample_x.shape     # (n_unroll, C_in, H, W)
 
 # Initialize model
 if transfer_learning:   # starts from a pretrained model
-    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/SSH_only_weighted_loss/checkpoints/checkpoint_all_data_all_pair_one_step_interval.pt", map_location="cpu")
+    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/Controls/checkpoints/checkpoint.pt", map_location="cpu")
     state = ckpt["model_state_dict"]
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
     missing, unexpected = model_adj.load_state_dict(state, strict=False)
