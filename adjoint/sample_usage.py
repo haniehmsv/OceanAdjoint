@@ -96,7 +96,7 @@ else:
         var_name_in='etan_ad',
         C_in=C_in,
         path_out=path_out,
-        var_name_out='controls_ad',
+        var_name_out='ad_zonal_and_meridional_stress',
         C_out=C_out,
         idx_in=idx_in,
         idx_out=idx_out,
