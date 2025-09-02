@@ -114,31 +114,30 @@ class AdjointRolloutDatasetFromNetCDF:
         self.data_std = data_std
         data = (data - self.data_mean) / self.data_std  # Normalize the data
 
-        x_window = []
-        y_window = []
-        for k in range(num_windows):
-            t_in = idx_in[k : k + n_unroll]                # length n_unroll
-            t_out = idx_out[k : k + n_unroll]       # length n_unroll
-            x = data[:, t_in, :C_in, :, :]          # (N, n_unroll, C_in, H, W)
-            y = data[:, t_out, :, :, :]                  # (N, n_unroll, C_out, H, W)
-            x_window.append(x)
-            y_window.append(y)
-        
-        # Stack windows across batch (N * num_windows, ...)
-        x_train = torch.cat(x_window[:split_k], dim=0)                          # (N*num_windows*train_percent, n_unroll, C_in, H, W)
-        y_train = torch.cat(y_window[:split_k], dim=0)                          # (N*num_windows*train_percent, n_unroll, C_out, H, W)
-        x_val   = torch.cat(x_window[split_k:], dim=0)                          # (N*num_windows*val_percent, n_unroll, C_in, H, W)
-        y_val   = torch.cat(y_window[split_k:], dim=0)                          # (N*num_windows*val_percent, n_unroll, C_out, H, W)
+        x_slice = data[:, idx_in[0] : idx_in[-1]  + 1]     # [N, Tx, Cin, H, W]
+        y_slice = data[:, idx_out[0] : idx_out[-1] + 1]   # [N, Ty, Cout_tot, H, W]
+        # Unfold along time (size=n_unroll, step=1) -> views
+        X = x_slice.unfold(1, n_unroll, 1)  # [N, num_windows, Cin, H, W, n_unroll]
+        X = X.movedim(-1, 2)                # [N, num_windows, n_unroll, Cin, H, W]
+        Y = y_slice.unfold(1, n_unroll, 1)  # [N, num_windows, C_out, H, W, n_unroll]
+        Y = Y.movedim(-1, 2)                # [N, num_windows, n_unroll, C_out, H, W]
+
+        X_train, Y_train = X[:, :split_k], Y[:, :split_k]
+        X_val,   Y_val   = X[:, split_k:], Y[:, split_k:]
+
+        X_train = X_train.reshape(-1, *X_train.shape[2:])  # [N*K, L, Cin, H, W]
+        Y_train = Y_train.reshape(-1, *Y_train.shape[2:])  # [N*K, L, Cout, H, W]
+        X_val   = X_val.reshape(-1, *X_val.shape[2:])      # [N*K_val, L, Cin, H, W]
+        Y_val   = Y_val.reshape(-1, *Y_val.shape[2:])      # [N*K_val, L, Cout, H, W]
 
         if pred_residual:
             # y[..., :C_in] := y - x_prev  (work in CPU, no in-place on saved tensors)
             # x_prev is x at t_in[1:] aligned with y at t_out[:]
-            y_train -= x_train
-            y_val -= x_val
+            Y_train[:, :, :C_in] = Y_train[:, :, :C_in] - X_train
+            Y_val[:, :, :C_in] = Y_val[:, :, :C_in] - X_val
 
-
-        self.train = (x_train, y_train)
-        self.val   = (x_val, y_val)
+        self.train = (X_train, Y_train)
+        self.val   = (X_val, Y_val)
 
     def get_datasets(self):
         """
