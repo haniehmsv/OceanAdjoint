@@ -35,16 +35,16 @@ C_in = 1
 C_out = C_in
 pred_residual = False
 remove_pole = True
-transfer_learning = False
-path_in = "/nobackupp17/ifenty/AD_ML/2025-08-30_all_training_points_10d_lag/adetan_training_points/consolidated/etan_ad_2025-08-30_3594pts_10d_consolidated.nc"
-path_out = "/nobackupp17/ifenty/AD_ML/2025-08-29_adcontrols/consolidated/ad_control_windstress_2025-08-29.nc"
+transfer_learning = True
+path_in = "/nobackupp17/ifenty/AD_ML/2025-08-30_360pt_90d/90d_adetan_training_points/consolidated/etan_ad_2025-08-30_360pt_90d_consolidated.nc"
+path_out = "/nobackupp17/ifenty/AD_ML/2025-08-30_360pt_90d/adcontrols/consolidated/ad_control_windstress_2025-08-30_360pts.nc"
 wet_mask_path = "/nobackupp17/ifenty/AD_ML/sam_grid/SAM_GRID_v01.nc"
-idx_in = [3,4,5,6,7,8]
-idx_out = [4,5,6,7,8,9]
-n_unroll = 3
+idx_in = list(range(3, 89))
+idx_out = list(range(4, 90))
+n_unroll = 1
 n_epochs = 1000
-val_percent = 0.1
-pred_status = "forcing"  # "state", "forcing", "state_and_forcing"
+val_percent = 0.2
+pred_status = "state_and_forcing"  # "state", "forcing", "state_and_forcing"
 if pred_status=="forcing":
     n_unroll = 1
     C_out = 2
@@ -120,7 +120,7 @@ train_loader, _, train_sampler, _ = data_loaders.get_distributed_loaders(
 # save data stats
 data_mean, data_std = loader.get_mean_std()
 if (not dist.is_initialized()) or dist.get_rank() == 0:
-    norm_path = f"data_stats_sequence_of_{n_unroll}_{pred_status}.npz"
+    norm_path = f"data_stats_91_day_sequence_of_{n_unroll}_{pred_status}.npz"
     if not os.path.exists(norm_path):
         np.savez(
             norm_path,
@@ -152,7 +152,7 @@ _, _, H, W = sample_x.shape     # (n_unroll, C_in, H, W)
 
 # Initialize model
 if transfer_learning:   # starts from a pretrained model
-    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/Controls/checkpoints/checkpoint.pt", map_location="cpu")
+    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/Controls/checkpoints/checkpoint_sequence_of_1_state_and_forcing.pt", map_location="cpu")
     state = ckpt["model_state_dict"]
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
     missing, unexpected = model_adj.load_state_dict(state, strict=False)
@@ -172,7 +172,7 @@ else:
 scheduler = None
 
 # Train the model
-checkpoint_path = f"checkpoints/checkpoint_sequence_of_{n_unroll}_{pred_status}.pt"
+checkpoint_path = f"checkpoints/checkpoint_91_day_sequence_of_{n_unroll}_{pred_status}.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
