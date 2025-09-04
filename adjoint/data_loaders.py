@@ -238,7 +238,10 @@ class AdjointForcingDatasetFromNetCDF:
         Y = Y.movedim(-1, 2)                # [N, num_windows, n_unroll, C_out, H, W]
 
         if C_out_total > C_out:
-            Y = torch.cat([X, Y], dim=3)  # Concatenate along channel dimension (C_in + C_out)
+            x_slice = data_in[:, idx_out[0] : idx_out[-1]  + 1]     # [N, Ty, Cin, H, W]
+            X_out = x_slice.unfold(1, n_unroll, 1)  # [N, num_windows, Cin, H, W, n_unroll]
+            X_out = X_out.movedim(-1, 2)                # [N, num_windows, n_unroll, Cin, H, W]
+            Y = torch.cat([X_out, Y], dim=3)  # Concatenate along channel dimension (C_in + C_out)
 
         X_train, Y_train = X[:, :split_k], Y[:, :split_k]
         X_val,   Y_val   = X[:, split_k:], Y[:, split_k:]
