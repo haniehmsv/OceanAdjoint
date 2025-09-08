@@ -44,6 +44,7 @@ idx_out = list(range(4, 90))
 n_unroll = 1
 n_epochs = 1000
 val_percent = 0.2
+loss_name = "Charbonnier"  # "MSE", "Huber", "Charbonnier"
 pred_status = "state_and_forcing"  # "state", "forcing", "state_and_forcing"
 if pred_status=="forcing":
     n_unroll = 1
@@ -152,7 +153,7 @@ _, _, H, W = sample_x.shape     # (n_unroll, C_in, H, W)
 
 # Initialize model
 if transfer_learning:   # starts from a pretrained model
-    ckpt = torch.load("/nobackup/smousav2/adjoint_learning/Controls/checkpoints/checkpoint_sequence_of_1_state_and_forcing.pt", map_location="cpu")
+    ckpt = torch.load(f"/nobackup/smousav2/adjoint_learning/Controls/checkpoints/checkpoint_91_day_{loss_name}_loss_sequence_of_{n_unroll}_{pred_status}.pt", map_location="cpu")
     state = ckpt["model_state_dict"]
     model_adj = model.AdjointModel(backbone=model.AdjointNet(wet, in_channels=C_in, out_channels=C_out)).to(device)
     missing, unexpected = model_adj.load_state_dict(state, strict=False)
@@ -172,7 +173,7 @@ else:
 scheduler = None
 
 # Train the model
-checkpoint_path = f"checkpoints/checkpoint_91_day_sequence_of_{n_unroll}_{pred_status}.pt"
+checkpoint_path = f"checkpoints/checkpoint_91_day_{loss_name}_loss_sequence_of_{n_unroll}_{pred_status}_2.pt"
 start_epoch = 1
 best_val_loss = float("inf")
 
@@ -200,6 +201,7 @@ model.train_adjoint_model(
     start_epoch=start_epoch,
     best_val_loss=best_val_loss,
     device=device,
+    loss_name=loss_name,
     pred_residual=pred_residual,
     area_weighting=area_weighting,
     pred_status=pred_status

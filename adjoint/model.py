@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import torch.nn.functional as F
 import random
 from itertools import tee
 import torch.distributed as dist
@@ -262,6 +263,40 @@ class AreaWeightedLoss(torch.nn.Module):
         :return: scalar loss value
         """
         return torch.mean(self.weight * (pred - target) ** 2)
+    
+
+class AreaWeightedHuberLoss(nn.Module):
+    def __init__(self, area_weighting, delta=1.0, reduction="mean"):
+        super().__init__()
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        self.register_buffer("weight", area_weighting.contiguous())
+        self.delta = float(delta)
+        self.reduction = reduction
+
+    def forward(self, pred, target):
+        e = pred - target
+        abs_e = torch.abs(e)
+        quad = 0.5 * (e ** 2)
+        lin  = self.delta * (abs_e - 0.5 * self.delta)
+        loss = torch.where(abs_e <= self.delta, quad, lin)
+        loss = self.weight * loss
+        return loss.mean() if self.reduction == "mean" else loss.sum()
+
+class AreaWeightedCharbonnierLoss(nn.Module):
+    def __init__(self, area_weighting, eps=3e-3, reduction="mean"):
+        super().__init__()
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        self.register_buffer("weight", area_weighting.contiguous())
+        self.eps = float(eps)
+        self.reduction = reduction
+
+    def forward(self, pred, target):
+        e = pred - target
+        loss = torch.sqrt(e * e + self.eps * self.eps)
+        loss = self.weight * loss
+        return loss.mean() if self.reduction == "mean" else loss.sum()
 
 
 def train_adjoint_model(
@@ -280,6 +315,7 @@ def train_adjoint_model(
         best_val_loss=float("inf"),
         checkpoint_path=None,
         area_weighting=None,
+        loss_name="MSE",    # "MSE", "Huber", "Charbonnier"
         pred_residual=False,
         pred_status=None
         ):
@@ -293,7 +329,12 @@ def train_adjoint_model(
     world_size = dist.get_world_size() if is_dist else 1
 
     if area_weighting is not None:
-        loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
+        if loss_name == "MSE":
+            loss_fn = AreaWeightedLoss(area_weighting=area_weighting)
+        elif loss_name == "Huber":
+            loss_fn = AreaWeightedHuberLoss(area_weighting=area_weighting)
+        elif loss_name == "Charbonnier":
+            loss_fn = AreaWeightedCharbonnierLoss(area_weighting=area_weighting)
     else:
         loss_fn = torch.nn.MSELoss()
 
