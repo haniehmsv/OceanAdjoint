@@ -44,7 +44,7 @@ idx_out = list(range(4, 90))
 n_unroll = 1
 n_epochs = 1000
 val_percent = 0.2
-loss_name = "Charbonnier"  # "MSE", "Huber", "Charbonnier"
+loss_name = "Charbonnier"  # "MSE", "Huber", "Charbonnier", "Relative"
 pred_status = "state_and_forcing"  # "state", "forcing", "state_and_forcing"
 if pred_status=="forcing":
     n_unroll = 1
