@@ -266,7 +266,7 @@ class AreaWeightedLoss(torch.nn.Module):
     
 
 class AreaWeightedHuberLoss(nn.Module):
-    def __init__(self, area_weighting, delta=1.0, reduction="mean"):
+    def __init__(self, area_weighting, delta=1e-03, reduction="mean"):
         super().__init__()
         if area_weighting.ndim == 2:
             area_weighting = area_weighting[None, None, :, :]
@@ -295,6 +295,23 @@ class AreaWeightedCharbonnierLoss(nn.Module):
     def forward(self, pred, target):
         e = pred - target
         loss = torch.sqrt(e * e + self.eps * self.eps)
+        loss = self.weight * loss
+        return loss.mean() if self.reduction == "mean" else loss.sum()
+
+class AreaWeightedRelativeLoss(nn.Module):
+    def __init__(self, area_weighting, eps=1e-2, reduction="mean"):
+        super().__init__()
+        if area_weighting.ndim == 2:
+            area_weighting = area_weighting[None, None, :, :]
+        self.register_buffer("weight", area_weighting.contiguous())
+        self.eps = float(eps)
+        self.reduction = reduction
+
+    def forward(self, pred, target):
+        e = pred - target
+        denom = torch.abs(target) + torch.abs(pred) + self.eps
+        loss = e / denom
+        loss = loss * loss
         loss = self.weight * loss
         return loss.mean() if self.reduction == "mean" else loss.sum()
 
@@ -335,6 +352,8 @@ def train_adjoint_model(
             loss_fn = AreaWeightedHuberLoss(area_weighting=area_weighting)
         elif loss_name == "Charbonnier":
             loss_fn = AreaWeightedCharbonnierLoss(area_weighting=area_weighting)
+        elif loss_name == "Relative":
+            loss_fn = AreaWeightedRelativeLoss(area_weighting=area_weighting)
     else:
         loss_fn = torch.nn.MSELoss()
 
